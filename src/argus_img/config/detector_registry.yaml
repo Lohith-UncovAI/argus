@@ -13,37 +13,37 @@ detectors:
     family: OCR
     category: prompt_injection
     required: false
-    required_profiles: [AGENT_WITH_TOOLS, OCR_EXTRACTION, PUBLIC_REPUBLISHING]
+    required_profiles: [AGENT_WITH_TOOLS, OCR_EXTRACTION, PUBLIC_REPUBLISHING, RAG_INGESTION]
 
   - id: detector:qr-pyzbar
     family: QR/barcode
     category: embedded_payload
     required: false
-    required_profiles: [AGENT_WITH_TOOLS]
+    required_profiles: [AGENT_WITH_TOOLS, RAG_INGESTION]
 
   - id: detector:prompt-rules
     family: prompt
     category: prompt_injection
     required: true
 
-  # Malware scanning: mandatory for AGENT_WITH_TOOLS and SECURITY_FORENSICS.
+  # Malware scanning: mandatory for AGENT_WITH_TOOLS, SECURITY_FORENSICS and RAG_INGESTION.
   # Must complete a real scan execution — UNSUPPORTED is not accepted for mandatory coverage.
   - id: detector:malware-clamav
     family: malware
     category: malware
     required: false
-    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS, RAG_INGESTION]
 
   - id: detector:malware-yara
     family: malware
     category: malware
     required: false
-    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS, RAG_INGESTION]
 
-  # Embedded-payload analysis: mandatory for AGENT_WITH_TOOLS and SECURITY_FORENSICS.
+  # Embedded-payload analysis: mandatory for AGENT_WITH_TOOLS, SECURITY_FORENSICS and RAG_INGESTION.
   # Must complete a real scan execution — UNSUPPORTED is not accepted for mandatory coverage.
   - id: detector:embedded-binwalk
     family: embedded_payload
     category: embedded_payload
     required: false
-    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS, RAG_INGESTION]

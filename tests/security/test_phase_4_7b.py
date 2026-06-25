@@ -214,8 +214,10 @@ def test_completed_clean_execution_satisfies_coverage():
     assert decision is None
 
 
-def test_detected_status_satisfies_mandatory_coverage():
-    """DETECTED + CONFIRMED satisfies mandatory coverage (triggers other rules)."""
+def test_detected_status_with_finding_satisfies_mandatory_coverage():
+    """DETECTED + CONFIRMED + associated finding satisfies mandatory coverage (Phase 4.7C invariant)."""
+    from argus_img.core.enums import PolicyAction
+    from argus_img.core.models import DetectorFinding
     registry = load_detector_registry()
     executions = _all_mandatory_except()
     for i, e in enumerate(executions):
@@ -226,7 +228,22 @@ def test_detected_status_satisfies_mandatory_coverage():
                 state=EpistemicState.CONFIRMED,
                 reason="Eicar-Test-Signature FOUND",
             )
-    decision = mandatory_coverage_decision(UseProfile.AGENT_WITH_TOOLS, registry, executions)
+    # Phase 4.7C: DETECTED must be accompanied by a finding to pass coverage.
+    findings = [
+        DetectorFinding(
+            finding_id="finding:test:clamav-detected",
+            category="malware",
+            type="malware_signature",
+            state=EpistemicState.CONFIRMED,
+            severity="critical",
+            source_artifact_ids=["artifact:test:orig"],
+            detector_ids=["detector:malware-clamav"],
+            reason_codes=["MALWARE_SIGNATURE_DETECTED"],
+            recommended_action=PolicyAction.QUARANTINE,
+            evidence={"signature_name": "Eicar-Test-Signature"},
+        )
+    ]
+    decision = mandatory_coverage_decision(UseProfile.AGENT_WITH_TOOLS, registry, executions, findings=findings)
     # Coverage is satisfied; any block/quarantine comes from policy engine, not coverage
     assert decision is None
 

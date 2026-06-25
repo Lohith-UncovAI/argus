@@ -5,7 +5,7 @@ import json
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -20,6 +20,16 @@ class OfflineConfig(BaseModel):
 
     strict: bool = False
     allow_dns_configured: bool = True
+
+
+class YaraConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    executable_path: Optional[str] = None
+    rule_bundle_path: Optional[str] = None
+    rule_bundle_sha256: Optional[str] = None
+    maximum_matches: int = Field(default=100, gt=0)
 
 
 class StorageConfig(BaseModel):
@@ -43,6 +53,7 @@ class AppConfig(BaseModel):
     limits: Limits = Field(default_factory=Limits)
     offline: OfflineConfig = Field(default_factory=OfflineConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    yara: YaraConfig = Field(default_factory=YaraConfig)
     optional_tools: Dict[str, str] = Field(default_factory=dict)
 
 

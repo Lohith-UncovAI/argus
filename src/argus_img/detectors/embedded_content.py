@@ -3,17 +3,27 @@
 Runs binwalk in analysis-only mode (no extraction) against the immutable
 snapshot. Extraction, when needed for forensic mode, must occur inside the
 isolated worker with its own resource limits.
+
+Offset-zero invariant: the outer image signature at byte offset 0 is expected
+and is NOT treated as an embedded payload. Only nested, appended or anomalous
+signatures (non-zero offset) produce findings.
 """
 from __future__ import annotations
 
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
-from argus_img.core.enums import DetectorStatus, EpistemicState
-from argus_img.core.models import DetectorExecution, DetectorReport, ModuleStatus
+from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction
+from argus_img.core.models import DetectorExecution, DetectorFinding, DetectorReport, ModuleStatus
 from argus_img.subprocesses.runner import ToolResult, executable_version, run_tool
+
+# These description fragments indicate the outer container (not an embedded payload).
+_OUTER_CONTAINER_DESCRIPTIONS = frozenset({
+    "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif", "heif", "heic",
+    "jfif", "exif", "image data", "bitmap",
+})
 
 
 def _utc_now() -> datetime:
@@ -34,29 +44,97 @@ def embedded_tool_statuses() -> dict:
     }
 
 
-def _parse_binwalk_output(result: ToolResult) -> tuple[DetectorStatus, EpistemicState, Optional[str]]:
-    """Parse binwalk stdout into (status, state, reason)."""
+def _is_outer_container_at_zero(line: str) -> bool:
+    """Return True if this binwalk line looks like the expected outer container at offset 0."""
+    parts = line.strip().split()
+    if not parts:
+        return False
+    # First token is decimal offset, second is hex offset, rest is description
+    try:
+        offset = int(parts[0])
+    except ValueError:
+        return False
+    if offset != 0:
+        return False
+    description = " ".join(parts[2:]).lower() if len(parts) > 2 else ""
+    for keyword in _OUTER_CONTAINER_DESCRIPTIONS:
+        if keyword in description:
+            return True
+    return False
+
+
+def _parse_binwalk_data_lines(stdout: str) -> List[Tuple[int, str]]:
+    """Return (offset, description) pairs for non-header, non-outer lines."""
+    results = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("DECIMAL") or stripped.startswith("-"):
+            continue
+        if _is_outer_container_at_zero(stripped):
+            continue
+        parts = stripped.split()
+        try:
+            offset = int(parts[0])
+        except (ValueError, IndexError):
+            continue
+        description = " ".join(parts[2:]) if len(parts) > 2 else stripped
+        results.append((offset, description))
+    return results
+
+
+def _make_binwalk_findings(
+    artifact_id: str,
+    scan_id: str,
+    matches: List[Tuple[int, str]],
+) -> List[DetectorFinding]:
+    findings = []
+    for i, (offset, description) in enumerate(matches):
+        desc_lower = description.lower()
+        sig_type = "embedded_executable" if any(
+            kw in desc_lower for kw in ("executable", "elf", "pe32", "mz ", "dos ", "script", "shell")
+        ) else "embedded_payload"
+        findings.append(DetectorFinding(
+            finding_id="finding:%s:binwalk-%d" % (scan_id, i),
+            category="embedded_payload",
+            type=sig_type,
+            state=EpistemicState.CONFIRMED,
+            severity="critical" if sig_type == "embedded_executable" else "high",
+            evidence_quality=0.85,
+            attack_likelihood=0.85,
+            impact="critical",
+            source_artifact_ids=[artifact_id],
+            detector_ids=["detector:embedded-binwalk"],
+            reason_codes=["NESTED_PAYLOAD_DETECTED"],
+            recommended_action=PolicyAction.QUARANTINE,
+            evidence={"offset": offset, "description": description[:300]},
+        ))
+    return findings
+
+
+def _parse_binwalk_output(
+    result: ToolResult,
+) -> tuple[DetectorStatus, EpistemicState, Optional[str], List[Tuple[int, str]]]:
+    """Parse binwalk stdout into (status, state, reason, matches)."""
     if result.timed_out:
-        return DetectorStatus.TIMEOUT, EpistemicState.INCONCLUSIVE, "binwalk timed out"
+        return DetectorStatus.TIMEOUT, EpistemicState.INCONCLUSIVE, "binwalk timed out", []
     if result.error:
-        return DetectorStatus.ERROR, EpistemicState.ERROR, result.error
+        return DetectorStatus.ERROR, EpistemicState.ERROR, result.error, []
     returncode = result.returncode
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
     if returncode is None:
-        return DetectorStatus.ERROR, EpistemicState.ERROR, "binwalk did not complete"
+        return DetectorStatus.ERROR, EpistemicState.ERROR, "binwalk did not complete", []
     if returncode != 0:
         msg = stderr or stdout or "binwalk error: rc=%s" % returncode
-        return DetectorStatus.ERROR, EpistemicState.ERROR, msg
-    # Binwalk output contains table rows for each found signature.
-    # A file with no embedded payloads produces only header lines (DECIMAL, etc.)
-    data_lines = [
-        line for line in stdout.splitlines()
-        if line.strip() and not line.strip().startswith("DECIMAL") and not line.strip().startswith("-")
-    ]
-    if data_lines:
-        return DetectorStatus.DETECTED, EpistemicState.CONFIRMED, data_lines[0][:200]
-    return DetectorStatus.NO_EVIDENCE, EpistemicState.NO_EVIDENCE_FOUND, None
+        return DetectorStatus.ERROR, EpistemicState.ERROR, msg, []
+    # Only nested/appended/anomalous signatures (non-zero offset) count
+    matches = _parse_binwalk_data_lines(stdout)
+    if matches:
+        reason = "embedded payload at offset %d: %s" % (matches[0][0], matches[0][1][:100])
+        return DetectorStatus.DETECTED, EpistemicState.CONFIRMED, reason, matches
+    return DetectorStatus.NO_EVIDENCE, EpistemicState.NO_EVIDENCE_FOUND, None, []
 
 
 def run_binwalk(
@@ -99,7 +177,7 @@ def run_binwalk(
         max_output_bytes=max_output_bytes,
     )
     completed = _utc_now()
-    status, state, reason = _parse_binwalk_output(result)
+    status, state, reason, matches = _parse_binwalk_output(result)
     execution = DetectorExecution(
         detector_id="detector:embedded-binwalk",
         status=status,
@@ -113,6 +191,9 @@ def run_binwalk(
         reason=reason,
         tool_version=version,
     )
+    findings: List[DetectorFinding] = []
+    if status == DetectorStatus.DETECTED:
+        findings = _make_binwalk_findings(artifact_id, scan_id, matches)
     return DetectorReport(
         manifest=DetectorManifest(
             detector_id="detector:embedded-binwalk",
@@ -121,5 +202,6 @@ def run_binwalk(
             version=version or "unknown",
         ),
         execution=execution,
+        findings=findings,
         errors=[reason] if status == DetectorStatus.ERROR else [],
     )

@@ -21,6 +21,9 @@ def _run_startup_lifecycle(config) -> None:
         store.recover_orphans()
         store.cleanup_job_dirs(older_than_seconds=config.storage.job_directory_retention_seconds)
         store.garbage_collect(retention_seconds=config.storage.orphan_grace_period_seconds)
+        # Per-category retention: expire old reports and revoke expired grants
+        store.expire_old_reports(config.storage.report_retention_seconds)
+        store.revoke_expired_grants(config.storage.released_artifact_retention_seconds)
         # Quota check: fail startup if already over quota
         store.enforce_storage_quota(config.storage.maximum_total_store_bytes)
     except ArgusError:

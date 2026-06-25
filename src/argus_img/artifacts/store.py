@@ -387,6 +387,58 @@ class ArtifactStore:
                     (artifact.model_dump_json(), artifact_id),
                 )
 
+    def finalize_scan_atomically(
+        self,
+        scan_id: str,
+        grants: List[ReleaseGrant],
+        report_json: str,
+    ) -> None:
+        """Commit scan report, release grants, and artifact eligibility flags atomically.
+
+        All database writes (INSERT report, INSERT grants, UPDATE artifacts) occur in
+        a single SQLite transaction.  Either all succeed or none are visible.
+        """
+        now = time.time()
+        report_dest = (self.reports_dir / (scan_id + ".json")).resolve()
+        if not str(report_dest).startswith(str(self.reports_dir.resolve()) + os.sep):
+            raise ArtifactAccessDenied("report path escapes reports root")
+
+        # Write the report file atomically before the DB transaction so that
+        # the file is durable before the DB row becomes visible.
+        tmp = report_dest.with_suffix(".tmp")
+        tmp.write_text(report_json, encoding="utf-8")
+        self._chmod(tmp, SECURE_FILE_MODE)
+        os.replace(str(tmp), str(report_dest))
+        self._chmod(report_dest, SECURE_FILE_MODE)
+
+        with self._connect() as connection:
+            # Persist the report index row
+            connection.execute(
+                "INSERT OR REPLACE INTO reports (scan_id, payload, created_at) VALUES (?, ?, ?)",
+                (scan_id, report_json, now),
+            )
+            for grant in grants:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO release_grants
+                        (grant_id, scan_id, artifact_id, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (grant.grant_id, scan_id, grant.artifact_id, grant.model_dump_json(), now),
+                )
+                # Mark the artifact release_eligible in the same transaction
+                row = connection.execute(
+                    "SELECT payload FROM artifacts WHERE artifact_id = ?",
+                    (grant.artifact_id,),
+                ).fetchone()
+                if row is not None:
+                    artifact = Artifact.model_validate_json(row["payload"])
+                    artifact.release_eligible = True
+                    connection.execute(
+                        "UPDATE artifacts SET release_eligible = 1, payload = ? WHERE artifact_id = ?",
+                        (artifact.model_dump_json(), grant.artifact_id),
+                    )
+
     def grants_for_scan(self, scan_id: str) -> List[ReleaseGrant]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -587,6 +639,59 @@ class ArtifactStore:
                 shutil.rmtree(path)
                 removed.append(path.name)
         return removed
+
+    def delete_scan(self, scan_id: str) -> None:
+        """Delete all DB records and the report file for a scan."""
+        with self._connect() as connection:
+            connection.execute("DELETE FROM release_grants WHERE scan_id = ?", (scan_id,))
+            connection.execute("DELETE FROM forensic_evidence WHERE scan_id = ?", (scan_id,))
+            connection.execute("DELETE FROM reports WHERE scan_id = ?", (scan_id,))
+        report_path = (self.reports_dir / (scan_id + ".json")).resolve()
+        if str(report_path).startswith(str(self.reports_dir.resolve()) + os.sep) and report_path.exists():
+            report_path.unlink()
+
+    def revoke_expired_grants(self, grant_max_age_seconds: float) -> List[str]:
+        """Revoke release grants older than grant_max_age_seconds.
+
+        Returns list of revoked grant IDs.
+        """
+        cutoff = time.time() - grant_max_age_seconds
+        revoked: List[str] = []
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT grant_id, artifact_id FROM release_grants WHERE created_at <= ?",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                revoked.append(row["grant_id"])
+                artifact_row = connection.execute(
+                    "SELECT payload FROM artifacts WHERE artifact_id = ?",
+                    (row["artifact_id"],),
+                ).fetchone()
+                if artifact_row is not None:
+                    artifact = Artifact.model_validate_json(artifact_row["payload"])
+                    artifact.release_eligible = False
+                    connection.execute(
+                        "UPDATE artifacts SET release_eligible = 0, payload = ? WHERE artifact_id = ?",
+                        (artifact.model_dump_json(), row["artifact_id"]),
+                    )
+            connection.execute("DELETE FROM release_grants WHERE created_at <= ?", (cutoff,))
+        return revoked
+
+    def expire_old_reports(self, max_age_seconds: float) -> List[str]:
+        """Delete scan reports older than max_age_seconds. Returns deleted scan IDs."""
+        cutoff = time.time() - max_age_seconds
+        deleted: List[str] = []
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT scan_id FROM reports WHERE created_at <= ?",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                deleted.append(row["scan_id"])
+        for scan_id in deleted:
+            self.delete_scan(scan_id)
+        return deleted
 
     def capability_status(self) -> ModuleStatus:
         return ModuleStatus(name="artifact_store", status=EpistemicState.CONFIRMED, reason=str(self.db_path))

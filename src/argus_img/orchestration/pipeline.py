@@ -64,7 +64,7 @@ from argus_img.orchestration.context import create_scan_context
 from argus_img.orchestration.mode_plan import plan_for_mode
 from argus_img.orchestration.representations import build_representation_manifest
 from argus_img.policy.engine import PolicyEngine
-from argus_img.policy.coverage import mandatory_coverage_decision
+from argus_img.policy.coverage import detected_without_finding_decision, mandatory_coverage_decision
 from argus_img.reconstruction.canonical import create_canonical_artifacts
 from argus_img.reporting.serialization import report_to_json
 from argus_img.transforms.registry import generate_fast_transformations
@@ -363,7 +363,10 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             artifacts.update(thumbnail_artifacts)
         transforms: Dict[str, Artifact] = {}
         if mode_plan.generate_transform_bank:
-            transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id, budget)
+            transforms = generate_fast_transformations(
+                store, canonical["canonical_lossless"], canonical_path, scan_id, budget,
+                active_transformations=mode_plan.active_transformations,
+            )
             artifacts.update(transforms)
 
         candidate_trailing = detect_trailing_bytes(
@@ -428,10 +431,12 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             config.limits.detector_timeout_seconds,
             max(1, int(budget.remaining_seconds())),
         )
-        yara_rule_path = getattr(getattr(config, "yara", None), "rule_bundle_path", None)
+        yara_cfg = config.yara
+        yara_bundle = Path(yara_cfg.rule_bundle_path) if yara_cfg.rule_bundle_path else None
         yara_report = run_yara(
             snapshot_path, original.artifact_id, scan_id, detector_timeout,
-            rule_bundle_path=Path(yara_rule_path) if yara_rule_path else None,
+            rule_bundle_path=yara_bundle,
+            rule_bundle_sha256=yara_cfg.rule_bundle_sha256,
             max_output_bytes=config.limits.max_subprocess_output_bytes,
         )
         _record_detector_report(yara_report, detector_executions, findings, observations)
@@ -602,14 +607,25 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         findings = deduplicate_findings(findings)
         assessments = build_assessments(findings, detector_executions)
         decision = PolicyEngine.load_for_profile(request.use_profile).decide(findings)
+
+        # Detection-to-policy invariant: any DETECTED execution without a finding fails closed
+        # for ALL profiles, regardless of strictness.
+        dwf_decision = detected_without_finding_decision(detector_executions, findings)
+        if dwf_decision is not None:
+            decision = dwf_decision
+
+        # Mandatory coverage gate: fails closed for strict profiles (including RAG/VLM).
         coverage_decision = mandatory_coverage_decision(
             request.use_profile,
             registry,
             detector_executions,
             representation_manifest,
+            findings=findings,
         )
         if coverage_decision is not None:
             decision = coverage_decision
+
+        # Compute grants before building the report so we can include them.
         release_grants = apply_release_grants(store, scan_id, artifacts, decision)
         timings = {"total_ms": (time.monotonic() - started) * 1000}
         report = ScanReport(
@@ -646,7 +662,8 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             evidence_graph=build_evidence_graph(artifacts, observations, findings),
         )
         report.internal_observations = observations
-        store.save_report(scan_id, report_to_json(report))
+        # Atomically persist: report row + grant rows + artifact eligibility flags
+        store.finalize_scan_atomically(scan_id, release_grants, report_to_json(report))
         return report
     except ResourceLimitExceeded as exc:
         report = _resource_limit_report(
