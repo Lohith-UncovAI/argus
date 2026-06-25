@@ -11,7 +11,7 @@ detectors:
     family: OCR
     category: prompt_injection
     required: false
-    required_profiles: [AGENT_WITH_TOOLS]
+    required_profiles: [AGENT_WITH_TOOLS, OCR_EXTRACTION, PUBLIC_REPUBLISHING]
   - id: detector:qr-pyzbar
     family: QR/barcode
     category: embedded_payload

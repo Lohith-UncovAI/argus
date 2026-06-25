@@ -4,10 +4,15 @@ from typing import List, Optional
 
 from argus_img.core.detector_registry import DetectorRegistry
 from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction, UseProfile
-from argus_img.core.models import DetectorExecution, PolicyDecision
+from argus_img.core.models import DetectorExecution, PolicyDecision, RepresentationManifest
 
 
-STRICT_PROFILES = {UseProfile.AGENT_WITH_TOOLS, UseProfile.SECURITY_FORENSICS}
+STRICT_PROFILES = {
+    UseProfile.AGENT_WITH_TOOLS,
+    UseProfile.OCR_EXTRACTION,
+    UseProfile.PUBLIC_REPUBLISHING,
+    UseProfile.SECURITY_FORENSICS,
+}
 MANDATORY_OK_STATUSES = {DetectorStatus.SUCCESS, DetectorStatus.NO_EVIDENCE}
 MANDATORY_OK_STATES = {EpistemicState.CONFIRMED, EpistemicState.NO_EVIDENCE_FOUND}
 
@@ -16,6 +21,7 @@ def mandatory_coverage_decision(
     profile: UseProfile,
     registry: DetectorRegistry,
     executions: List[DetectorExecution],
+    representation_manifest: Optional[RepresentationManifest] = None,
 ) -> Optional[PolicyDecision]:
     if profile not in STRICT_PROFILES:
         return None
@@ -28,6 +34,8 @@ def mandatory_coverage_decision(
             continue
         if execution.status not in MANDATORY_OK_STATUSES or execution.state not in MANDATORY_OK_STATES:
             failures.append("%s:%s/%s" % (entry.id, execution.status.value, execution.state.value))
+    if representation_manifest is not None and not representation_manifest.coverage_complete:
+        failures.extend("representation:%s:missing" % item for item in representation_manifest.missing_required)
     if not failures:
         return None
     return PolicyDecision(

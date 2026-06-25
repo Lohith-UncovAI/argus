@@ -46,9 +46,21 @@ def encode_png(image: Image.Image) -> bytes:
     return out.getvalue()
 
 
-def encode_jpeg(image: Image.Image, quality: int = 90) -> bytes:
-    out = io.BytesIO()
+def alpha_composite_rgb(image: Image.Image, background: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
+    if image.mode == "RGBA":
+        bg = Image.new("RGBA", image.size, background + (255,))
+        return Image.alpha_composite(bg, image).convert("RGB")
+    if image.mode in {"LA", "PA"} or "A" in image.getbands():
+        rgba = image.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, background + (255,))
+        return Image.alpha_composite(bg, rgba).convert("RGB")
     if image.mode != "RGB":
-        image = image.convert("RGB")
-    image.save(out, format="JPEG", quality=quality, optimize=False)
+        return image.convert("RGB")
+    return image.copy()
+
+
+def encode_jpeg(image: Image.Image, quality: int = 90, background: tuple[int, int, int] = (255, 255, 255)) -> bytes:
+    out = io.BytesIO()
+    rgb = alpha_composite_rgb(image, background)
+    rgb.save(out, format="JPEG", quality=quality, optimize=False)
     return out.getvalue()

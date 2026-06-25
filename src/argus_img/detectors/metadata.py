@@ -254,7 +254,6 @@ def analyze_with_exiftool(
     result = run_tool(
         [executable, "-config", os.devnull, "-j", "-G1", "-s", "-charset", "filename=utf8", str(path)],
         timeout=timeout_seconds,
-        cwd=path.parent,
         max_output_bytes=max_metadata_bytes,
     )
     version = executable_version(executable, "-ver") if "/" not in executable else None

@@ -1,0 +1,19 @@
+profile: OCR_EXTRACTION
+default_action: ALLOW_RECONSTRUCTED_ONLY
+default_summary: OCR extraction defaults to the validated reconstructed candidate after text checks pass.
+rules:
+  - id: ocr-block-active-prompt
+    priority: 900
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: BLOCK
+    summary: Active prompt-injection instructions were detected in extracted text.
+  - id: ocr-review-possible-prompt
+    priority: 700
+    when: {category: prompt_injection, state: POSSIBLE}
+    action: REVIEW
+    summary: Possible prompt-injection text needs review before OCR use.
+  - id: ocr-review-privacy
+    priority: 650
+    when: {category: privacy, state: CONFIRMED}
+    action: REVIEW
+    summary: Privacy-sensitive text was detected.

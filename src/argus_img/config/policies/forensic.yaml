@@ -1,4 +1,6 @@
 profile: SECURITY_FORENSICS
+default_action: REVIEW
+default_summary: Forensic scans default to review so analysts retain custody of results.
 rules:
   - id: forensic-quarantine-malware
     priority: 1000
@@ -8,4 +10,3 @@ rules:
     priority: 200
     when: {state: CONFIRMED}
     action: REVIEW
-

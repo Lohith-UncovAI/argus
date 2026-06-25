@@ -1,4 +1,6 @@
 profile: HUMAN_VIEW
+default_action: ALLOW_RECONSTRUCTED_ONLY
+default_summary: Human-view scans default to the validated reconstructed candidate.
 rules:
   - id: human-quarantine-malware
     priority: 1000
@@ -12,4 +14,3 @@ rules:
     priority: 500
     when: {category: privacy, state: CONFIRMED}
     action: ALLOW_WITH_REDACTION
-

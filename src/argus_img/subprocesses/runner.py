@@ -92,23 +92,36 @@ def run_tool(
 ) -> ToolResult:
     if not args:
         return ToolResult(args=args, returncode=None, stdout="", stderr="", error="empty command")
+    if timeout <= 0:
+        return ToolResult(args=args, returncode=None, stdout="", stderr="", timed_out=True, error="deadline_exceeded")
+    if max_output_bytes <= 0:
+        return ToolResult(args=args, returncode=None, stdout="", stderr="", error="invalid_output_budget")
     executable = _resolve_executable(args[0])
     if not executable:
         return ToolResult(args=args, returncode=None, stdout="", stderr="", error="executable_not_found")
     resolved_args = [executable] + args[1:]
-    cwd_path = Path(cwd or Path.cwd()).resolve()
     start = time.monotonic()
     process = None
     timed_out = False
     stdout = b""
     stderr = b""
     try:
-        with tempfile.TemporaryDirectory(prefix="argus-tool-home-") as home:
+        with tempfile.TemporaryDirectory(prefix="argus-tool-home-") as home, tempfile.TemporaryDirectory(prefix="argus-tool-work-") as work:
+            cwd_path = Path(cwd).resolve() if cwd is not None else Path(work).resolve()
+            if not cwd_path.exists() or not cwd_path.is_dir():
+                return ToolResult(args=resolved_args, returncode=None, stdout="", stderr="", error="invalid_cwd")
+            try:
+                os.chmod(home, 0o700)
+                if cwd is None:
+                    os.chmod(work, 0o700)
+            except OSError:
+                pass
             clean_env = {
                 "LANG": "C.UTF-8",
                 "LC_ALL": "C.UTF-8",
                 "HOME": home,
                 "PATH": str(Path(executable).parent),
+                "ARGUS_NETWORK_DISABLED": "1",
             }
             if not strict_env:
                 clean_env["PATH"] = os.environ.get("PATH", clean_env["PATH"])
@@ -127,7 +140,7 @@ def run_tool(
                 env=clean_env,
                 shell=False,
                 start_new_session=True,
-                preexec_fn=_resource_preexec(resource_limits),
+                preexec_fn=_resource_preexec(resource_limits or ToolResourceLimits(cpu_seconds=max(1, int(timeout) + 1))),
             )
             stdout_buffer = bytearray()
             stderr_buffer = bytearray()

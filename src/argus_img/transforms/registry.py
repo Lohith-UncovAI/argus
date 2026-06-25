@@ -48,7 +48,7 @@ def generate_fast_transformations(
     gray = ImageOps.grayscale(image)
     artifacts: Dict[str, Artifact] = {}
 
-    def store_transformed(label: str, transformed: Image.Image) -> None:
+    def store_transformed(label: str, transformed: Image.Image, parameters: Optional[dict] = None) -> None:
         if transformed.mode not in {"RGB", "RGBA"}:
             transformed = transformed.convert("RGB")
         data = encode_png(transformed)
@@ -58,7 +58,8 @@ def generate_fast_transformations(
         transformation = ArtifactTransformation(
             transformation_id="transform:%s" % label,
             type=label.replace("-", "_"),
-            parameters={},
+            parameters=parameters or {},
+            inverse_coordinate_mapping="identity",
             reliability_class="forensic",
             resource_cost_class="low",
         )
@@ -73,6 +74,7 @@ def generate_fast_transformations(
             transformation=transformation,
             width=transformed.width,
             height=transformed.height,
+            representation_id="repr:%s" % label,
         )
 
     store_transformed("grayscale", gray)
@@ -81,7 +83,7 @@ def generate_fast_transformations(
     channels = image.split()
     channel_names = ["red-channel", "green-channel", "blue-channel", "alpha-channel"]
     for name, channel in zip(channel_names, channels):
-        store_transformed(name, channel)
+        store_transformed(name, channel, {"source_channel": name.removesuffix("-channel")})
     enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
     store_transformed("2x-enlargement", enlarged)
     return artifacts

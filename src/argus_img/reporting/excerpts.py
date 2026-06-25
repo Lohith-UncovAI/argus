@@ -18,12 +18,10 @@ def safe_excerpt(text: str, max_chars: int = 80) -> str:
 
 
 def text_evidence(text: str, include_raw_text: bool = False) -> dict:
-    evidence = {
-        "excerpt": safe_excerpt(text),
-        "full_text_returned": include_raw_text,
-        "text_sha256": sha256_bytes(text.encode("utf-8", errors="replace")),
+    payload = text.encode("utf-8", errors="replace")
+    return {
+        "text_sha256": sha256_bytes(payload),
+        "text_length": len(payload),
+        "full_text_returned": False,
+        "forensic_evidence_required": bool(text),
     }
-    if include_raw_text:
-        evidence["raw_text"] = text
-    return evidence
-

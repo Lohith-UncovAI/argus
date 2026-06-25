@@ -55,6 +55,18 @@
           "title": "Release Eligible",
           "type": "boolean"
         },
+        "representation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
+        },
         "role": {
           "default": "derived",
           "title": "Role",
@@ -613,6 +625,18 @@
           "default": null,
           "title": "Original Filename"
         },
+        "quarantined_artifact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quarantined Artifact Id"
+        },
         "sha256": {
           "title": "Sha256",
           "type": "string"
@@ -795,10 +819,6 @@
           "title": "Detector",
           "type": "string"
         },
-        "escaped_excerpt": {
-          "title": "Escaped Excerpt",
-          "type": "string"
-        },
         "length": {
           "title": "Length",
           "type": "integer"
@@ -842,7 +862,6 @@
         "source",
         "detector",
         "classification",
-        "escaped_excerpt",
         "sha256",
         "length"
       ],
@@ -911,6 +930,139 @@
         "reason"
       ],
       "title": "ReleaseGrant",
+      "type": "object"
+    },
+    "RepresentationEntry": {
+      "properties": {
+        "analyzed": {
+          "default": false,
+          "title": "Analyzed",
+          "type": "boolean"
+        },
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "coverage_notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Coverage Notes",
+          "type": "array"
+        },
+        "frame_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frame Index"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "release_relevant": {
+          "default": true,
+          "title": "Release Relevant",
+          "type": "boolean"
+        },
+        "representation_id": {
+          "title": "Representation Id",
+          "type": "string"
+        },
+        "required_for_release": {
+          "default": true,
+          "title": "Required For Release",
+          "type": "boolean"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "transformation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transformation Id"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "representation_id",
+        "artifact_id",
+        "kind",
+        "source_artifact_id",
+        "media_type",
+        "sha256"
+      ],
+      "title": "RepresentationEntry",
+      "type": "object"
+    },
+    "RepresentationManifest": {
+      "properties": {
+        "coverage_complete": {
+          "default": true,
+          "title": "Coverage Complete",
+          "type": "boolean"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/RepresentationEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "missing_required": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Required",
+          "type": "array"
+        }
+      },
+      "title": "RepresentationManifest",
       "type": "object"
     },
     "ScanMode": {
@@ -1054,6 +1206,9 @@
       },
       "title": "Release Grants",
       "type": "array"
+    },
+    "representation_manifest": {
+      "$ref": "#/$defs/RepresentationManifest"
     },
     "scan_id": {
       "title": "Scan Id",

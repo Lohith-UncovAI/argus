@@ -33,11 +33,12 @@ def deduplicate_findings(findings: List[DetectorFinding]) -> List[DetectorFindin
     result = []
     for finding in findings:
         text_hash = finding.evidence.get("text_sha256")
+        support_key = "prompt-class" if finding.category == "prompt_injection" else text_hash
         key = (
             finding.category,
             finding.type,
             tuple(sorted(finding.reason_codes)),
-            text_hash or tuple(sorted(finding.observation_ids)),
+            support_key or tuple(sorted(finding.observation_ids)),
         )
         if key in seen:
             existing = seen[key]

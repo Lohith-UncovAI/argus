@@ -13,7 +13,7 @@ from argus_img.core.budget import ResourceBudget
 from argus_img.core.config import AppConfig, load_config
 from argus_img.core.detector_registry import load_detector_registry
 from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction
-from argus_img.core.exceptions import IntakeRejected
+from argus_img.core.exceptions import IntakeRejected, ResourceLimitExceeded
 from argus_img.core.hashing import sha256_file
 from argus_img.core.models import (
     Artifact,
@@ -27,6 +27,7 @@ from argus_img.core.models import (
     Limitation,
     ModuleStatus,
     PolicyDecision,
+    RepresentationManifest,
     ScanReport,
     ScanRequest,
     ScannerInfo,
@@ -35,6 +36,7 @@ from argus_img.core.models import (
 from argus_img.core.offline_guard import OfflineGuard
 from argus_img.decoding.differential import compare_decoders
 from argus_img.decoding.frames import extract_frames
+from argus_img.decoding.thumbnails import extract_embedded_thumbnails, thumbnail_status
 from argus_img.detectors.embedded_content import embedded_tool_statuses
 from argus_img.detectors.machine_codes.qr import analyze_qr
 from argus_img.detectors.malware import malware_tool_statuses
@@ -59,6 +61,7 @@ from argus_img.evidence.graph import build_evidence_graph
 from argus_img.intake.mime import detect_magic
 from argus_img.intake.validation import validate_image_file
 from argus_img.orchestration.context import create_scan_context
+from argus_img.orchestration.representations import build_representation_manifest
 from argus_img.policy.engine import PolicyEngine
 from argus_img.policy.coverage import mandatory_coverage_decision
 from argus_img.reconstruction.canonical import create_canonical_artifacts
@@ -183,7 +186,73 @@ def _rejected_report(
     )
 
 
+def _resource_limit_report(
+    scan_id: str,
+    request: ScanRequest,
+    config_hash: str,
+    file_descriptor: FileDescriptor,
+    artifacts: Dict[str, Artifact],
+    reason: str,
+    module_status: Dict[str, ModuleStatus],
+    limitations: List[Limitation],
+    errors: List[ErrorRecord],
+) -> ScanReport:
+    finding = DetectorFinding(
+        finding_id="finding:%s:resource-limit" % scan_id,
+        category="file_security",
+        type="resource_limit_exceeded",
+        state=EpistemicState.ERROR,
+        severity="high",
+        evidence_quality=1.0,
+        impact="high",
+        source_artifact_ids=[artifact.artifact_id for artifact in artifacts.values()],
+        detector_ids=["detector:resource-budget"],
+        reason_codes=["RESOURCE_LIMIT_EXCEEDED"],
+        recommended_action=PolicyAction.UNSUPPORTED,
+        evidence={"reason": reason},
+    )
+    execution = _execution(
+        "detector:resource-budget",
+        DetectorStatus.ERROR,
+        EpistemicState.ERROR,
+        family="orchestration",
+        category="file_security",
+        required=True,
+        reason=reason,
+    )
+    decision = PolicyDecision(
+        action=PolicyAction.UNSUPPORTED,
+        safe_claim=False,
+        reason_codes=["RESOURCE_LIMIT_EXCEEDED"],
+        triggered_policy_rules=["resource-budget"],
+        winning_rule_id="resource-budget",
+        winning_rule_priority=20000,
+        summary="Scan exceeded configured resource budgets.",
+        explanation=reason,
+    )
+    return ScanReport(
+        scan_id=scan_id,
+        scanner=_scanner_info(request, config_hash),
+        input=file_descriptor,
+        decision=decision,
+        assessments=build_assessments([finding], [execution]),
+        findings=[finding],
+        artifacts=artifacts,
+        representation_manifest=build_representation_manifest(artifacts, []),
+        observations=[],
+        detector_executions=[execution],
+        release_grants=[],
+        coverage=CoverageAssessment(original_container="partial", universal_absence_claim=False),
+        module_status=module_status,
+        limitations=limitations,
+        errors=[*errors, ErrorRecord(source="resource_budget", message=reason)],
+        timings_ms={},
+        evidence_graph=build_evidence_graph(artifacts, [], [finding]),
+    )
+
+
 def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optional[AppConfig] = None) -> ScanReport:
+    path = Path(path)
     request = request or ScanRequest(original_filename=path.name)
     config = config or load_config()
     registry = load_detector_registry()
@@ -215,14 +284,23 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             description="Unknown watermark schemes are not exhaustively detectable.",
         ),
     ]
+    file_descriptor = FileDescriptor(
+        original_filename=request.original_filename or path.name,
+        size_bytes=path.stat().st_size if path.exists() and not path.is_symlink() else 0,
+        sha256="",
+        declared_mime=request.declared_mime,
+        detected_mime="application/octet-stream",
+        format="UNKNOWN",
+        width=None,
+        height=None,
+        frames=0,
+    )
     try:
         OfflineGuard(strict=config.offline.strict).reject_remote_input(str(path))
-        path = Path(path)
-        detected_mime, format_name = detect_magic(path)
         original = store.store_file(
             path,
             artifact_id="artifact:%s:original" % scan_id,
-            media_type=detected_mime,
+            media_type="application/octet-stream",
             created_by="intake",
             role="original",
             quarantine=True,
@@ -230,43 +308,75 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             max_bytes=config.limits.max_input_bytes,
         )
         budget.consume_artifact(original.size_bytes)
+        snapshot_path = store.resolve_path(original)
+        detected_mime, format_name = detect_magic(snapshot_path)
+        original.media_type = detected_mime
+        original.representation_id = "repr:original"
+        store.update_artifact(original)
         artifacts["original"] = original
         try:
-            file_descriptor = validate_image_file(path, request.declared_mime, config.limits)
+            file_descriptor = validate_image_file(
+                snapshot_path,
+                request.declared_mime,
+                config.limits,
+                known_sha256=original.sha256,
+                known_size=original.size_bytes,
+                quarantined_artifact_id=original.artifact_id,
+            )
             file_descriptor.original_filename = request.original_filename or path.name
         except IntakeRejected as exc:
             file_descriptor = FileDescriptor(
                 original_filename=request.original_filename or path.name,
-                size_bytes=path.stat().st_size,
-                sha256=sha256_file(path),
+                size_bytes=original.size_bytes,
+                sha256=original.sha256,
                 declared_mime=request.declared_mime,
                 detected_mime=detected_mime,
                 format=format_name,
                 width=None,
                 height=None,
                 frames=0,
+                quarantined_artifact_id=original.artifact_id,
             )
             report = _rejected_report(scan_id, request, context.config_hash, file_descriptor, artifacts, str(exc))
             store.save_report(scan_id, report_to_json(report))
             return report
         budget.consume_decoded_pixels((file_descriptor.width or 0) * (file_descriptor.height or 0) * max(file_descriptor.frames, 1))
 
-        trailing = detect_trailing_bytes(path, file_descriptor.format, original.artifact_id, "finding:%s:trailing-bytes" % scan_id)
+        trailing = detect_trailing_bytes(snapshot_path, file_descriptor.format, original.artifact_id, "finding:%s:trailing-bytes" % scan_id)
         if trailing:
             findings.append(trailing)
-        differential_findings, opencv_status = compare_decoders(path, original.artifact_id, "finding:%s:decoder-differential" % scan_id)
+        differential_findings, opencv_status = compare_decoders(snapshot_path, original.artifact_id, "finding:%s:decoder-differential" % scan_id)
         findings.extend(differential_findings)
         module_status["opencv_decoder"] = opencv_status
 
-        canonical = create_canonical_artifacts(store, original, path, scan_id, budget)
+        canonical = create_canonical_artifacts(store, original, snapshot_path, scan_id, budget)
         artifacts.update(canonical)
         canonical_path = store.resolve_path(canonical["canonical_lossless"])
-        if request.mode.value in {"deep", "forensic"} and file_descriptor.frames > 1:
-            artifacts.update(extract_frames(store, original, path, scan_id, config.limits.max_frames, budget))
+        release_candidate_path = store.resolve_path(canonical["canonical_lossy"])
+        if file_descriptor.frames > 1:
+            artifacts.update(extract_frames(store, original, snapshot_path, scan_id, config.limits.max_frames, budget))
+        thumbnail_artifacts = extract_embedded_thumbnails(store, original, snapshot_path, scan_id, budget)
+        artifacts.update(thumbnail_artifacts)
         transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id, budget)
         artifacts.update(transforms)
 
-        metadata_report = analyze_builtin_metadata(path, original.artifact_id, scan_id, include_raw_text=False)
+        candidate_trailing = detect_trailing_bytes(
+            release_candidate_path,
+            "JPEG",
+            canonical["canonical_lossy"].artifact_id,
+            "finding:%s:release-candidate-trailing-bytes" % scan_id,
+        )
+        if candidate_trailing:
+            findings.append(candidate_trailing)
+        candidate_differential_findings, candidate_opencv_status = compare_decoders(
+            release_candidate_path,
+            canonical["canonical_lossy"].artifact_id,
+            "finding:%s:release-candidate-decoder-differential" % scan_id,
+        )
+        findings.extend(candidate_differential_findings)
+        module_status["release_candidate_decoder"] = candidate_opencv_status
+
+        metadata_report = analyze_builtin_metadata(snapshot_path, original.artifact_id, scan_id, include_raw_text=False)
         _record_detector_report(metadata_report, detector_executions, findings, observations)
         module_status["metadata_builtin"] = ModuleStatus(
             name="metadata_builtin",
@@ -274,7 +384,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             reason=metadata_report.execution.reason,
         )
         exiftool_report = analyze_with_exiftool(
-            path,
+            snapshot_path,
             original.artifact_id,
             scan_id,
             min(config.limits.parser_timeout_seconds, max(1, int(budget.remaining_seconds()))),
@@ -290,6 +400,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         module_status["c2pa"] = provenance_status()
         module_status["paddleocr"] = paddle_status()
         module_status["zsteg"] = zsteg_status()
+        module_status["embedded_thumbnails"] = thumbnail_status(thumbnail_artifacts)
         module_status["watermark_registry"] = watermark_registry_status()
         module_status["redaction_analysis"] = redaction_analysis_status()
         module_status["adversarial_stability"] = baseline_stability_status()
@@ -299,11 +410,23 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             reason="NullVisualAnalyzer configured",
         )
 
+        frame_inputs = [
+            (label, artifact, store.resolve_path(artifact))
+            for label, artifact in artifacts.items()
+            if artifact.role.startswith("frame-")
+        ]
+        thumbnail_inputs = [
+            (label, artifact, store.resolve_path(artifact))
+            for label, artifact in artifacts.items()
+            if "thumbnail" in artifact.role
+        ]
+        transform_inputs = [(label, artifact, store.resolve_path(artifact)) for label, artifact in transforms.items()]
         ocr_inputs = [
+            ("release_candidate", canonical["canonical_lossy"], release_candidate_path),
             ("canonical_lossless", canonical["canonical_lossless"], canonical_path),
             ("flattened_white", canonical["flattened_white"], store.resolve_path(canonical["flattened_white"])),
             ("flattened_black", canonical["flattened_black"], store.resolve_path(canonical["flattened_black"])),
-        ] + [(label, artifact, store.resolve_path(artifact)) for label, artifact in transforms.items()]
+        ] + frame_inputs + thumbnail_inputs + transform_inputs
         ocr_report = analyze_with_tesseract(
             ocr_inputs,
             scan_id,
@@ -393,10 +516,19 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 reason=str(exc),
             )
 
+        store.save_forensic_texts(scan_id, observations)
+        analyzed_artifact_ids = {original.artifact_id}
+        analyzed_artifact_ids.update(artifact.artifact_id for _, artifact, _ in ocr_inputs)
+        representation_manifest = build_representation_manifest(artifacts, analyzed_artifact_ids)
         findings = deduplicate_findings(findings)
         assessments = build_assessments(findings, detector_executions)
         decision = PolicyEngine.load_for_profile(request.use_profile).decide(findings)
-        coverage_decision = mandatory_coverage_decision(request.use_profile, registry, detector_executions)
+        coverage_decision = mandatory_coverage_decision(
+            request.use_profile,
+            registry,
+            detector_executions,
+            representation_manifest,
+        )
         if coverage_decision is not None:
             decision = coverage_decision
         release_grants = apply_release_grants(store, scan_id, artifacts, decision)
@@ -409,12 +541,13 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             assessments=assessments,
             findings=findings,
             artifacts=artifacts,
+            representation_manifest=representation_manifest,
             observations=[observation.to_public() for observation in observations],
             detector_executions=detector_executions,
             release_grants=release_grants,
             coverage=CoverageAssessment(
                 original_container="high",
-                all_frames="complete" if file_descriptor.frames <= 1 else "partial",
+                all_frames="complete" if representation_manifest.coverage_complete else "partial",
                 visible_text="medium" if module_status["tesseract"].status != EpistemicState.UNSUPPORTED else "low",
                 low_contrast_text="medium",
                 metadata_text="medium",
@@ -434,6 +567,20 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             evidence_graph=build_evidence_graph(artifacts, observations, findings),
         )
         report.internal_observations = observations
+        store.save_report(scan_id, report_to_json(report))
+        return report
+    except ResourceLimitExceeded as exc:
+        report = _resource_limit_report(
+            scan_id,
+            request,
+            context.config_hash,
+            file_descriptor,
+            artifacts,
+            str(exc),
+            module_status,
+            limitations,
+            errors,
+        )
         store.save_report(scan_id, report_to_json(report))
         return report
     finally:

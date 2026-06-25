@@ -47,5 +47,6 @@ def extract_frames(
                 width=frame.width,
                 height=frame.height,
                 frame_index=index,
+                representation_id="repr:frame:%03d" % index,
             )
     return artifacts

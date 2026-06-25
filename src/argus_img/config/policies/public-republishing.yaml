@@ -1,0 +1,24 @@
+profile: PUBLIC_REPUBLISHING
+default_action: REVIEW
+default_summary: Public republishing defaults to review when no specific allow rule matches.
+rules:
+  - id: public-quarantine-malware
+    priority: 1000
+    when: {category: malware, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: QUARANTINE
+    summary: Known or highly likely malware evidence was found.
+  - id: public-block-prompt
+    priority: 900
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: BLOCK
+    summary: Active prompt-injection instructions are not publishable.
+  - id: public-review-possible-prompt
+    priority: 700
+    when: {category: prompt_injection, state: POSSIBLE}
+    action: REVIEW
+    summary: Possible prompt-injection content requires review.
+  - id: public-redact-privacy
+    priority: 650
+    when: {category: privacy, state: CONFIRMED}
+    action: ALLOW_WITH_REDACTION
+    summary: Privacy-sensitive content must be redacted before publication.

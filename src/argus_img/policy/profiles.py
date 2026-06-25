@@ -8,8 +8,8 @@ PROFILE_FILES = {
     UseProfile.RAG_INGESTION: "rag-ingestion.yaml",
     UseProfile.AGENT_WITH_TOOLS: "agent-with-tools.yaml",
     UseProfile.SECURITY_FORENSICS: "forensic.yaml",
-    UseProfile.PUBLIC_REPUBLISHING: "human-view.yaml",
-    UseProfile.OCR_EXTRACTION: "human-view.yaml",
+    UseProfile.PUBLIC_REPUBLISHING: "public-republishing.yaml",
+    UseProfile.OCR_EXTRACTION: "ocr-extraction.yaml",
 }
 
 def policy_relative_path(profile: UseProfile) -> tuple[str, str]:

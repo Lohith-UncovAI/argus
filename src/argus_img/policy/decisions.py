@@ -106,6 +106,8 @@ class PolicyDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: UseProfile
+    default_action: PolicyAction
+    default_summary: str = ""
     rules: List[PolicyRule] = Field(min_length=1)
 
     @field_validator("rules")

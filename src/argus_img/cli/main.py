@@ -123,10 +123,7 @@ if typer is not None:
 
 
 def main() -> None:
-    if typer is None:
-        _argparse_main()
-    else:
-        app()
+    _argparse_main()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 profile: VLM_READ_ONLY
+default_action: ALLOW_RECONSTRUCTED_ONLY
+default_summary: VLM read-only scans default to the validated reconstructed candidate.
 rules:
   - id: vlm-block-active-prompt
     priority: 900
@@ -8,4 +10,3 @@ rules:
     priority: 700
     when: {category: prompt_injection, state: POSSIBLE}
     action: REVIEW
-

@@ -1,4 +1,6 @@
 profile: AGENT_WITH_TOOLS
+default_action: ALLOW_RECONSTRUCTED_ONLY
+default_summary: No policy rule matched; only the validated reconstructed candidate may be released.
 rules:
   - id: quarantine-known-malware
     priority: 1000
@@ -57,4 +59,3 @@ rules:
       state: CONFIRMED
     action: ALLOW_WITH_REDACTION
     summary: Privacy-sensitive text was detected.
-

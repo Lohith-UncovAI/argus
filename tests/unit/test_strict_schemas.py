@@ -14,6 +14,7 @@ from argus_img.reporting.json_schema import scan_report_schema
 
 BASE_POLICY = {
     "profile": "AGENT_WITH_TOOLS",
+    "default_action": "ALLOW_RECONSTRUCTED_ONLY",
     "rules": [
         {
             "id": "block-prompt",

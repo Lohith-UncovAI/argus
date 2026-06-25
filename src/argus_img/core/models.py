@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from html import escape
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny
@@ -48,6 +47,7 @@ class FileDescriptor(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     frames: int = 0
+    quarantined_artifact_id: Optional[str] = None
 
 
 class ArtifactTransformation(BaseModel):
@@ -73,6 +73,7 @@ class Artifact(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     frame_index: Optional[int] = None
+    representation_id: Optional[str] = None
 
 
 class ReleaseGrant(BaseModel):
@@ -86,6 +87,29 @@ class ReleaseGrant(BaseModel):
     transformation_id: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     reason: str
+
+
+class RepresentationEntry(BaseModel):
+    representation_id: str
+    artifact_id: str
+    kind: str
+    source_artifact_id: str
+    required_for_release: bool = True
+    release_relevant: bool = True
+    analyzed: bool = False
+    media_type: str
+    sha256: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    frame_index: Optional[int] = None
+    transformation_id: Optional[str] = None
+    coverage_notes: List[str] = Field(default_factory=list)
+
+
+class RepresentationManifest(BaseModel):
+    entries: List[RepresentationEntry] = Field(default_factory=list)
+    coverage_complete: bool = True
+    missing_required: List[str] = Field(default_factory=list)
 
 
 class Observation(BaseModel):
@@ -111,8 +135,6 @@ class TextObservation(Observation):
     context: str = "ambiguous"
 
     def to_public(self) -> "PublicTextObservation":
-        from argus_img.reporting.excerpts import safe_excerpt
-
         raw = self.raw_text or ""
         location: Dict[str, Any] = {}
         if self.bounding_polygon:
@@ -129,7 +151,6 @@ class TextObservation(Observation):
             or "text"
         )
         source = str(self.value.get("source") or self.engine or self.detector_id)
-        excerpt = safe_excerpt(raw, max_chars=80)
         return PublicTextObservation(
             observation_id=self.observation_id,
             source_artifact_id=self.source_artifact_id,
@@ -138,7 +159,6 @@ class TextObservation(Observation):
             classification=classification,
             transformation=self.transformation_id,
             location=location,
-            escaped_excerpt=escape(excerpt, quote=True),
             sha256=sha256_bytes(raw.encode("utf-8", errors="replace")),
             length=len(raw.encode("utf-8", errors="replace")),
         )
@@ -152,7 +172,6 @@ class PublicTextObservation(BaseModel):
     classification: str
     transformation: Optional[str] = None
     location: Dict[str, Any] = Field(default_factory=dict)
-    escaped_excerpt: str
     sha256: str
     length: int
 
@@ -309,6 +328,7 @@ class ScanReport(BaseModel):
     assessments: Dict[str, CategoryAssessment]
     findings: List[DetectorFinding] = Field(default_factory=list)
     artifacts: Dict[str, Artifact] = Field(default_factory=dict)
+    representation_manifest: RepresentationManifest = Field(default_factory=RepresentationManifest)
     observations: List[PublicTextObservation] = Field(default_factory=list)
     detector_executions: List[DetectorExecution] = Field(default_factory=list)
     release_grants: List[ReleaseGrant] = Field(default_factory=list)

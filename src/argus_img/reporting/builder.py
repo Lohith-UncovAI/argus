@@ -13,11 +13,11 @@ def build_report(
     artifacts: Dict[str, Artifact],
     observations: List[Observation],
     findings: List[DetectorFinding],
-    detector_executions: Optional[List[DetectorExecution]] = None,
     module_status: dict,
     limitations: list,
     errors: list,
     timings_ms: dict,
+    detector_executions: Optional[List[DetectorExecution]] = None,
 ) -> ScanReport:
     detector_executions = detector_executions or []
     assessments = build_assessments(findings, detector_executions)

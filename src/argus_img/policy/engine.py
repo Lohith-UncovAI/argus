@@ -14,8 +14,10 @@ from argus_img.policy.profiles import policy_relative_path
 
 
 class PolicyEngine:
-    def __init__(self, rules: List[PolicyRule]) -> None:
+    def __init__(self, rules: List[PolicyRule], default_action: PolicyAction, default_summary: str) -> None:
         self.rules = sorted(rules, key=lambda rule: (-rule.priority, rule.id))
+        self.default_action = default_action
+        self.default_summary = default_summary
 
     @classmethod
     def load_for_profile(cls, profile: UseProfile) -> "PolicyEngine":
@@ -26,7 +28,7 @@ class PolicyEngine:
             raise ConfigurationError("invalid policy for %s: %s" % (profile.value, exc)) from exc
         if document.profile != profile:
             raise ConfigurationError("policy profile mismatch: expected %s got %s" % (profile.value, document.profile.value))
-        return cls(document.rules)
+        return cls(document.rules, document.default_action, document.default_summary)
 
     def decide(self, findings: List[DetectorFinding]) -> PolicyDecision:
         matches = []
@@ -37,12 +39,14 @@ class PolicyEngine:
                     break
         if not matches:
             return PolicyDecision(
-                action=PolicyAction.ALLOW_RECONSTRUCTED_ONLY,
+                action=self.default_action,
                 safe_claim=False,
-                reason_codes=[],
-                triggered_policy_rules=[],
-                summary="No policy rule matched; only reconstructed derivatives are releasable.",
-                explanation="The original upload remains quarantined.",
+                reason_codes=["POLICY_DEFAULT_ACTION"],
+                triggered_policy_rules=["policy-default-action"],
+                winning_rule_id="policy-default-action",
+                winning_rule_priority=-1,
+                summary=self.default_summary or "No policy rule matched; explicit default action applied.",
+                explanation="The selected profile explicitly declares this default action.",
             )
         winning, winning_finding = matches[0]
         reason_codes = sorted({code for _, finding in matches for code in finding.reason_codes})

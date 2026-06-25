@@ -1,4 +1,6 @@
 profile: ARCHIVE_ONLY
+default_action: REVIEW
+default_summary: Archive-only scans default to review when no higher-severity rule matches.
 rules:
   - id: archive-quarantine-malware
     priority: 1000
@@ -8,4 +10,3 @@ rules:
     priority: 700
     when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
     action: REVIEW
-

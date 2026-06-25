@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 from typing import Iterable, List
 
 from argus_img.core.enums import DetectorStatus, EpistemicState
@@ -42,7 +41,6 @@ def analyze_with_tesseract(
         result = run_tool(
             ["tesseract", str(path), "stdout", "--psm", "6"],
             timeout=timeout_seconds,
-            cwd=Path(path).parent,
             max_output_bytes=max_output_bytes,
         )
         if result.timed_out:

@@ -1,4 +1,6 @@
 profile: RAG_INGESTION
+default_action: ALLOW_RECONSTRUCTED_ONLY
+default_summary: RAG ingestion defaults to the validated reconstructed candidate.
 rules:
   - id: rag-block-active-prompt
     priority: 900
@@ -8,4 +10,3 @@ rules:
     priority: 650
     when: {category: privacy, state: CONFIRMED}
     action: REVIEW
-
