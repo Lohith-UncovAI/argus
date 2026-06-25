@@ -1,0 +1,11 @@
+profile: RAG_INGESTION
+rules:
+  - id: rag-block-active-prompt
+    priority: 900
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: BLOCK
+  - id: rag-review-privacy
+    priority: 650
+    when: {category: privacy, state: CONFIRMED}
+    action: REVIEW
+

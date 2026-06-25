@@ -20,12 +20,17 @@ def detector_report(
     observations: Optional[List[Observation]] = None,
     reason: Optional[str] = None,
     optional: bool = False,
+    category: Optional[str] = None,
+    required: bool = False,
 ) -> DetectorReport:
     manifest = DetectorManifest(detector_id=detector_id, name=detector_id, family=family, optional=optional)
     execution = DetectorExecution(
         detector_id=detector_id,
         status=status,
         state=state,
+        family=family,
+        category=category,
+        required=required,
         completed_at=datetime.now(timezone.utc),
         reason=reason,
     )
@@ -36,4 +41,3 @@ def detector_report(
         observations=observations or [],
         limitations=[reason] if reason else [],
     )
-

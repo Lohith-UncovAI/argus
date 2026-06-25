@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import os
 import json
+from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence, Union
 
 import yaml
-from pydantic import BaseModel, Field
+from importlib.abc import Traversable
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from .exceptions import ConfigurationError
 from .hashing import sha256_bytes
 from .limits import Limits
 
 
 class OfflineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     strict: bool = False
     allow_dns_configured: bool = True
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     data_dir: str = "data"
     default_policy: str = "agent-with-tools"
     limits: Limits = Field(default_factory=Limits)
@@ -34,19 +42,82 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-def load_config(path: Optional[Path] = None) -> AppConfig:
-    default_path = Path("config/default.yaml")
-    data: Dict[str, Any] = {}
-    if default_path.exists():
-        with default_path.open("r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
+ConfigRoot = Union[Path, Traversable]
+
+
+def _read_text(root: ConfigRoot, relative: Sequence[str]) -> str:
+    if isinstance(root, Path):
+        path = root.joinpath(*relative)
+        if not path.exists():
+            raise ConfigurationError("missing required config file: %s" % path)
+        return path.read_text(encoding="utf-8")
+    resource = root
+    for part in relative:
+        resource = resource.joinpath(part)
+    if not resource.is_file():
+        raise ConfigurationError("missing required packaged config file: %s" % "/".join(relative))
+    return resource.read_text(encoding="utf-8")
+
+
+def read_config_text(relative: Sequence[str], config_root: Optional[Path] = None) -> str:
+    return _read_text(resolve_config_root(config_root), relative)
+
+
+def _validate_config_root(root: ConfigRoot) -> ConfigRoot:
+    for relative in [("default.yaml",), ("policies", "agent-with-tools.yaml"), ("prompt_rules", "generic.yaml")]:
+        _read_text(root, relative)
+    return root
+
+
+def _repo_config_root() -> Optional[Path]:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "config"
+        if (candidate / "default.yaml").exists():
+            return candidate
+    return None
+
+
+def _packaged_config_root() -> ConfigRoot:
+    return resources.files("argus_img").joinpath("config")
+
+
+def resolve_config_root(explicit_root: Optional[Path] = None) -> ConfigRoot:
+    if explicit_root is not None:
+        return _validate_config_root(explicit_root.resolve())
+    env_root = os.environ.get("ARGUS_CONFIG_ROOT")
+    if env_root:
+        return _validate_config_root(Path(env_root).resolve())
+    repo_root = _repo_config_root()
+    if repo_root is not None:
+        return _validate_config_root(repo_root)
+    return _validate_config_root(_packaged_config_root())
+
+
+def load_yaml_config(relative: Sequence[str], config_root: Optional[Path] = None) -> Dict[str, Any]:
+    raw = yaml.safe_load(read_config_text(relative, config_root)) or {}
+    if not isinstance(raw, dict):
+        raise ConfigurationError("config file must contain a mapping: %s" % "/".join(relative))
+    return raw
+
+
+def load_config(path: Optional[Path] = None, config_root: Optional[Path] = None) -> AppConfig:
+    data: Dict[str, Any] = load_yaml_config(("default.yaml",), config_root)
     if path is not None:
         with path.open("r", encoding="utf-8") as handle:
-            data = _deep_merge(data, yaml.safe_load(handle) or {})
-    return AppConfig.model_validate(data)
+            override = yaml.safe_load(handle) or {}
+            if not isinstance(override, dict):
+                raise ConfigurationError("config override must contain a mapping: %s" % path)
+            data = _deep_merge(data, override)
+    if os.environ.get("ARGUS_DATA_DIR"):
+        data["data_dir"] = os.environ["ARGUS_DATA_DIR"]
+    if os.environ.get("ARGUS_OFFLINE_STRICT"):
+        data.setdefault("offline", {})["strict"] = os.environ["ARGUS_OFFLINE_STRICT"].lower() in {"1", "true", "yes"}
+    try:
+        return AppConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ConfigurationError("invalid configuration: %s" % exc) from exc
 
 
 def config_hash(config: AppConfig) -> str:
     payload = json.dumps(config.model_dump(mode="json"), sort_keys=True).encode("utf-8")
     return sha256_bytes(payload)
-

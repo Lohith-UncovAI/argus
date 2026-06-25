@@ -8,9 +8,12 @@ def test_clean_png_reconstructs_and_allows_reconstructed_only(fixture_path, app_
     ScanReport.model_validate_json(report.model_dump_json())
     assert report.decision.action == PolicyAction.ALLOW_RECONSTRUCTED_ONLY
     assert "canonical_lossless" in report.artifacts
-    assert report.artifacts["canonical_lossless"].release_eligible is True
+    assert report.artifacts["canonical_lossless"].release_eligible is False
+    assert report.artifacts["canonical_lossy"].release_eligible is True
     assert report.artifacts["original"].release_eligible is False
+    assert [grant.artifact_id for grant in report.release_grants] == [report.artifacts["canonical_lossy"].artifact_id]
     assert report.decision.safe_claim is False
+    assert all(not hasattr(observation, "raw_text") for observation in report.observations)
 
 
 def test_visible_prompt_fixture_blocks(fixture_path, app_config):
@@ -28,7 +31,7 @@ def test_benign_discussion_is_possible_not_blocked(fixture_path, app_config):
 def test_metadata_prompt_is_traced_to_metadata_observation(fixture_path, app_config):
     report = scan_file(fixture_path / "metadata_prompt.png", ScanRequest(original_filename="metadata_prompt.png"), app_config)
     finding = next(f for f in report.findings if f.category == "prompt_injection")
-    obs = {observation.observation_id: observation for observation in report.observations}
+    obs = {observation.observation_id: observation for observation in report.internal_observations}
     assert any(obs[obs_id].engine == "pillow-metadata" for obs_id in finding.observation_ids)
     assert report.decision.action == PolicyAction.BLOCK
     assert report.module_status["exiftool"].status in {
@@ -42,7 +45,7 @@ def test_metadata_prompt_is_traced_to_metadata_observation(fixture_path, app_con
 def test_channel_prompt_retains_transformation_trace(fixture_path, app_config):
     report = scan_file(fixture_path / "red_channel_prompt.png", ScanRequest(original_filename="red_channel_prompt.png"), app_config)
     finding = next(f for f in report.findings if f.category == "prompt_injection")
-    obs = {observation.observation_id: observation for observation in report.observations}
+    obs = {observation.observation_id: observation for observation in report.internal_observations}
     transforms = {obs[obs_id].transformation_id for obs_id in finding.observation_ids if obs_id in obs}
     assert "transform:red-channel" in transforms
 

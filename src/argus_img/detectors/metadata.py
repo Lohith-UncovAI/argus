@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -138,6 +139,8 @@ def analyze_builtin_metadata(
             DetectorStatus.ERROR,
             EpistemicState.ERROR,
             reason=str(exc),
+            category="privacy",
+            required=True,
         )
     for index, (key, value) in enumerate(pairs):
         text = value[:100_000]
@@ -171,7 +174,16 @@ def analyze_builtin_metadata(
         )
     state = EpistemicState.CONFIRMED if observations or findings else EpistemicState.NO_EVIDENCE_FOUND
     status = DetectorStatus.SUCCESS if observations or findings else DetectorStatus.NO_EVIDENCE
-    return detector_report("detector:metadata-builtin", "metadata", status, state, findings, observations)
+    return detector_report(
+        "detector:metadata-builtin",
+        "metadata",
+        status,
+        state,
+        findings,
+        observations,
+        category="privacy",
+        required=True,
+    )
 
 
 def _exiftool_privacy_finding(
@@ -237,9 +249,10 @@ def analyze_with_exiftool(
             EpistemicState.UNSUPPORTED,
             reason="tool_not_installed",
             optional=True,
+            category="privacy",
         )
     result = run_tool(
-        [executable, "-j", "-G1", "-s", "-charset", "filename=utf8", str(path)],
+        [executable, "-config", os.devnull, "-j", "-G1", "-s", "-charset", "filename=utf8", str(path)],
         timeout=timeout_seconds,
         cwd=path.parent,
         max_output_bytes=max_metadata_bytes,
@@ -253,6 +266,7 @@ def analyze_with_exiftool(
             EpistemicState.ERROR,
             reason="timeout",
             optional=True,
+            category="privacy",
         )
         report.execution.tool_version = version
         return report
@@ -264,6 +278,7 @@ def analyze_with_exiftool(
             EpistemicState.UNSUPPORTED,
             reason="tool_not_installed",
             optional=True,
+            category="privacy",
         )
     if result.returncode not in (0,):
         report = detector_report(
@@ -273,6 +288,7 @@ def analyze_with_exiftool(
             EpistemicState.ERROR,
             reason=(result.stderr or result.error or "exiftool_failed")[:300],
             optional=True,
+            category="privacy",
         )
         report.execution.tool_version = version
         return report
@@ -286,6 +302,7 @@ def analyze_with_exiftool(
             EpistemicState.ERROR,
             reason="invalid_json: %s" % exc,
             optional=True,
+            category="privacy",
         )
         report.execution.tool_version = version
         return report
@@ -343,7 +360,16 @@ def analyze_with_exiftool(
         )
     state = EpistemicState.CONFIRMED if observations or findings else EpistemicState.NO_EVIDENCE_FOUND
     status = DetectorStatus.SUCCESS if observations or findings else DetectorStatus.NO_EVIDENCE
-    report = detector_report("detector:exiftool", "metadata", status, state, findings, observations, optional=True)
+    report = detector_report(
+        "detector:exiftool",
+        "metadata",
+        status,
+        state,
+        findings,
+        observations,
+        optional=True,
+        category="privacy",
+    )
     report.execution.tool_version = version
     return report
 

@@ -1,4 +1,407 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DetectorReport"
+  "$defs": {
+    "DetectorExecution": {
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "detector_id": {
+          "title": "Detector Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "status": {
+          "$ref": "#/$defs/DetectorStatus"
+        },
+        "tool_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Version"
+        }
+      },
+      "required": [
+        "detector_id",
+        "status",
+        "state"
+      ],
+      "title": "DetectorExecution",
+      "type": "object"
+    },
+    "DetectorFinding": {
+      "properties": {
+        "attack_likelihood": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attack Likelihood"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "detector_confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detector Confidence"
+        },
+        "detector_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Detector Ids",
+          "type": "array"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "object"
+        },
+        "evidence_quality": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Quality"
+        },
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "impact": {
+          "default": "medium",
+          "title": "Impact",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Observation Ids",
+          "type": "array"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "source_artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Artifact Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding_id",
+        "category",
+        "type",
+        "state",
+        "severity"
+      ],
+      "title": "DetectorFinding",
+      "type": "object"
+    },
+    "DetectorManifest": {
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "detector_id": {
+          "title": "Detector Id",
+          "type": "string"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "detector_id",
+        "name",
+        "family"
+      ],
+      "title": "DetectorManifest",
+      "type": "object"
+    },
+    "DetectorStatus": {
+      "enum": [
+        "SUCCESS",
+        "NO_EVIDENCE",
+        "UNSUPPORTED",
+        "TOOL_NOT_INSTALLED",
+        "TIMEOUT",
+        "ERROR",
+        "NOT_TESTED"
+      ],
+      "title": "DetectorStatus",
+      "type": "string"
+    },
+    "EpistemicState": {
+      "enum": [
+        "CONFIRMED",
+        "HIGHLY_LIKELY",
+        "POSSIBLE",
+        "NO_EVIDENCE_FOUND",
+        "INCONCLUSIVE",
+        "NOT_TESTED",
+        "UNSUPPORTED",
+        "ERROR"
+      ],
+      "title": "EpistemicState",
+      "type": "string"
+    },
+    "Observation": {
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "detector_id": {
+          "title": "Detector Id",
+          "type": "string"
+        },
+        "observation_id": {
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "transformation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transformation Id"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "object"
+        }
+      },
+      "required": [
+        "observation_id",
+        "type",
+        "source_artifact_id",
+        "detector_id"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "PolicyAction": {
+      "enum": [
+        "ALLOW_ORIGINAL",
+        "ALLOW_RECONSTRUCTED_ONLY",
+        "ALLOW_WITH_REDACTION",
+        "REVIEW",
+        "BLOCK",
+        "QUARANTINE",
+        "UNSUPPORTED"
+      ],
+      "title": "PolicyAction",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "errors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "execution": {
+      "$ref": "#/$defs/DetectorExecution"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/DetectorFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "manifest": {
+      "$ref": "#/$defs/DetectorManifest"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "manifest",
+    "execution"
+  ],
+  "title": "DetectorReport",
+  "type": "object"
 }

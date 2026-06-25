@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-from typing import Any, Dict
-
 from argus_img.core.models import DetectorFinding
+from argus_img.policy.decisions import PolicyCondition
 
 
-def finding_matches(finding: DetectorFinding, condition: Dict[str, Any]) -> bool:
-    if "category" in condition and finding.category != condition["category"]:
+def finding_matches(finding: DetectorFinding, condition: PolicyCondition) -> bool:
+    if condition.category is not None and finding.category != condition.category:
         return False
-    if "type" in condition and finding.type != condition["type"]:
+    if condition.type is not None and finding.type != condition.type:
         return False
-    if "state" in condition and finding.state.value != condition["state"]:
+    if condition.state is not None and finding.state != condition.state:
         return False
-    if "state_in" in condition and finding.state.value not in condition["state_in"]:
+    if condition.state_in is not None and finding.state not in condition.state_in:
         return False
-    if "reason_code" in condition and condition["reason_code"] not in finding.reason_codes:
+    if condition.reason_code is not None and condition.reason_code not in finding.reason_codes:
         return False
-    if "severity_in" in condition and finding.severity not in condition["severity_in"]:
+    if condition.severity_in is not None and finding.severity not in condition.severity_in:
         return False
-    if "greater_than_or_equal" in condition:
-        for key, value in condition["greater_than_or_equal"].items():
+    if condition.greater_than_or_equal is not None:
+        for key, value in condition.greater_than_or_equal.items():
             if getattr(finding, key, None) is None or getattr(finding, key) < value:
                 return False
     return True
-

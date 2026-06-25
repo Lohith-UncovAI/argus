@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from PIL import Image
 
 from argus_img.artifacts.store import ArtifactStore
+from argus_img.core.budget import ResourceBudget
 from argus_img.core.models import Artifact, ArtifactTransformation
 from argus_img.decoding.pillow_decoder import encode_jpeg, encode_png, normalized_first_frame
 
@@ -22,18 +23,23 @@ def create_canonical_artifacts(
     source_artifact: Artifact,
     source_path: Path,
     scan_id: str,
+    budget: Optional[ResourceBudget] = None,
 ) -> Dict[str, Artifact]:
     image = normalized_first_frame(source_path)
     if image.mode not in {"RGB", "RGBA"}:
         image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
     artifacts: Dict[str, Artifact] = {}
+    lossless_bytes = encode_png(image)
+    if budget:
+        budget.consume_transformed_pixels(image.width * image.height)
+        budget.consume_artifact(len(lossless_bytes))
     artifacts["canonical_lossless"] = store.store_bytes(
-        encode_png(image),
+        lossless_bytes,
         artifact_id="artifact:%s:canonical-lossless" % scan_id,
         media_type="image/png",
         created_by="canonical-reconstruction",
         role="canonical_lossless",
-        release_eligible=True,
+        release_eligible=False,
         derived_from=source_artifact.artifact_id,
         transformation=ArtifactTransformation(
             transformation_id="transform:canonical-lossless",
@@ -43,53 +49,66 @@ def create_canonical_artifacts(
         width=image.width,
         height=image.height,
     )
+    lossy_bytes = encode_jpeg(image, quality=90)
+    if budget:
+        budget.consume_transformed_pixels(image.width * image.height)
+        budget.consume_artifact(len(lossy_bytes))
     artifacts["canonical_lossy"] = store.store_bytes(
-        encode_jpeg(image, quality=90),
+        lossy_bytes,
         artifact_id="artifact:%s:canonical-lossy" % scan_id,
         media_type="image/jpeg",
         created_by="canonical-reconstruction",
         role="canonical_lossy",
-        release_eligible=True,
+        release_eligible=False,
         derived_from=source_artifact.artifact_id,
         transformation=ArtifactTransformation(
             transformation_id="transform:canonical-lossy",
             type="canonical_lossy_jpeg",
-            parameters={"metadata_stripped": True, "quality": 90},
+            parameters={"metadata_stripped": True, "lossy": True, "flattened": True, "quality": 90},
         ),
         width=image.width,
         height=image.height,
     )
+    flattened_white = _flatten(image, (255, 255, 255, 255))
+    flattened_white_bytes = encode_png(flattened_white)
+    if budget:
+        budget.consume_transformed_pixels(flattened_white.width * flattened_white.height)
+        budget.consume_artifact(len(flattened_white_bytes))
     artifacts["flattened_white"] = store.store_bytes(
-        encode_png(_flatten(image, (255, 255, 255, 255))),
+        flattened_white_bytes,
         artifact_id="artifact:%s:flattened-white" % scan_id,
         media_type="image/png",
         created_by="canonical-reconstruction",
         role="flattened_white",
-        release_eligible=True,
+        release_eligible=False,
         derived_from=source_artifact.artifact_id,
         transformation=ArtifactTransformation(
             transformation_id="transform:flattened-white",
             type="alpha_flatten",
             parameters={"background": "white", "metadata_stripped": True},
         ),
-        width=image.width,
-        height=image.height,
+        width=flattened_white.width,
+        height=flattened_white.height,
     )
+    flattened_black = _flatten(image, (0, 0, 0, 255))
+    flattened_black_bytes = encode_png(flattened_black)
+    if budget:
+        budget.consume_transformed_pixels(flattened_black.width * flattened_black.height)
+        budget.consume_artifact(len(flattened_black_bytes))
     artifacts["flattened_black"] = store.store_bytes(
-        encode_png(_flatten(image, (0, 0, 0, 255))),
+        flattened_black_bytes,
         artifact_id="artifact:%s:flattened-black" % scan_id,
         media_type="image/png",
         created_by="canonical-reconstruction",
         role="flattened_black",
-        release_eligible=True,
+        release_eligible=False,
         derived_from=source_artifact.artifact_id,
         transformation=ArtifactTransformation(
             transformation_id="transform:flattened-black",
             type="alpha_flatten",
             parameters={"background": "black", "metadata_stripped": True},
         ),
-        width=image.width,
-        height=image.height,
+        width=flattened_black.width,
+        height=flattened_black.height,
     )
     return artifacts
-

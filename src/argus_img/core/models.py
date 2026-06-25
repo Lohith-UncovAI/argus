@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny
 
 from .enums import DetectorStatus, EpistemicState, PolicyAction, ScanMode, UseProfile
+from .hashing import sha256_bytes
 
 
 def utc_now() -> datetime:
@@ -73,6 +75,19 @@ class Artifact(BaseModel):
     frame_index: Optional[int] = None
 
 
+class ReleaseGrant(BaseModel):
+    grant_id: str
+    scan_id: str
+    artifact_id: str
+    sha256: str
+    role: str
+    action: PolicyAction
+    media_type: str
+    transformation_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    reason: str
+
+
 class Observation(BaseModel):
     observation_id: str
     type: str
@@ -94,6 +109,52 @@ class TextObservation(Observation):
     original_image_polygon: Optional[List[List[float]]] = None
     character_alternatives: Optional[List[str]] = None
     context: str = "ambiguous"
+
+    def to_public(self) -> "PublicTextObservation":
+        from argus_img.reporting.excerpts import safe_excerpt
+
+        raw = self.raw_text or ""
+        location: Dict[str, Any] = {}
+        if self.bounding_polygon:
+            location["bounding_polygon"] = self.bounding_polygon
+        if self.original_image_polygon:
+            location["original_image_polygon"] = self.original_image_polygon
+        for key in ("artifact_label", "metadata_key", "decoded_type"):
+            if key in self.value:
+                location[key] = self.value[key]
+        classification = str(
+            self.value.get("classification")
+            or self.value.get("decoded_type")
+            or self.context
+            or "text"
+        )
+        source = str(self.value.get("source") or self.engine or self.detector_id)
+        excerpt = safe_excerpt(raw, max_chars=80)
+        return PublicTextObservation(
+            observation_id=self.observation_id,
+            source_artifact_id=self.source_artifact_id,
+            detector=self.detector_id,
+            source=source,
+            classification=classification,
+            transformation=self.transformation_id,
+            location=location,
+            escaped_excerpt=escape(excerpt, quote=True),
+            sha256=sha256_bytes(raw.encode("utf-8", errors="replace")),
+            length=len(raw.encode("utf-8", errors="replace")),
+        )
+
+
+class PublicTextObservation(BaseModel):
+    observation_id: str
+    source_artifact_id: str
+    source: str
+    detector: str
+    classification: str
+    transformation: Optional[str] = None
+    location: Dict[str, Any] = Field(default_factory=dict)
+    escaped_excerpt: str
+    sha256: str
+    length: int
 
 
 class DerivedText(BaseModel):
@@ -120,6 +181,9 @@ class DetectorExecution(BaseModel):
     detector_id: str
     status: DetectorStatus
     state: EpistemicState
+    family: Optional[str] = None
+    category: Optional[str] = None
+    required: bool = False
     started_at: datetime = Field(default_factory=utc_now)
     completed_at: Optional[datetime] = None
     duration_ms: Optional[float] = None
@@ -234,6 +298,8 @@ class ScannerInfo(BaseModel):
 
 
 class ScanReport(BaseModel):
+    _internal_observations: List[SerializeAsAny[Observation]] = PrivateAttr(default_factory=list)
+
     schema_version: str = "1.0.0"
     scan_id: str
     created_at: datetime = Field(default_factory=utc_now)
@@ -243,10 +309,20 @@ class ScanReport(BaseModel):
     assessments: Dict[str, CategoryAssessment]
     findings: List[DetectorFinding] = Field(default_factory=list)
     artifacts: Dict[str, Artifact] = Field(default_factory=dict)
-    observations: List[SerializeAsAny[Observation]] = Field(default_factory=list)
+    observations: List[PublicTextObservation] = Field(default_factory=list)
+    detector_executions: List[DetectorExecution] = Field(default_factory=list)
+    release_grants: List[ReleaseGrant] = Field(default_factory=list)
     coverage: CoverageAssessment = Field(default_factory=CoverageAssessment)
     module_status: Dict[str, ModuleStatus] = Field(default_factory=dict)
     limitations: List[Limitation] = Field(default_factory=list)
     errors: List[ErrorRecord] = Field(default_factory=list)
     timings_ms: Dict[str, float] = Field(default_factory=dict)
     evidence_graph: Dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def internal_observations(self) -> List[SerializeAsAny[Observation]]:
+        return self._internal_observations
+
+    @internal_observations.setter
+    def internal_observations(self, observations: List[SerializeAsAny[Observation]]) -> None:
+        self._internal_observations = observations

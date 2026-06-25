@@ -39,6 +39,7 @@ def analyze_qr(artifact_paths: Iterable[tuple], scan_id: str, include_raw_text: 
             EpistemicState.UNSUPPORTED,
             reason="tool_not_installed",
             optional=True,
+            category="embedded_payload",
         )
     observations: List[TextObservation] = []
     findings: List[DetectorFinding] = []
@@ -83,5 +84,13 @@ def analyze_qr(artifact_paths: Iterable[tuple], scan_id: str, include_raw_text: 
             )
     status = DetectorStatus.SUCCESS if observations else DetectorStatus.NO_EVIDENCE
     state = EpistemicState.CONFIRMED if observations else EpistemicState.NO_EVIDENCE_FOUND
-    return detector_report("detector:qr-pyzbar", "QR/barcode", status, state, findings, observations, optional=True)
-
+    return detector_report(
+        "detector:qr-pyzbar",
+        "QR/barcode",
+        status,
+        state,
+        findings,
+        observations,
+        optional=True,
+        category="embedded_payload",
+    )

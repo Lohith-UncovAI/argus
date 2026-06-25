@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from argus_img.core.config import read_config_text
 from argus_img.core.enums import EpistemicState, PolicyAction
 from argus_img.core.exceptions import ConfigurationError
 from argus_img.core.models import DetectorFinding, TextObservation
@@ -13,14 +15,37 @@ from argus_img.detectors.prompt.intent import extract_intent
 from argus_img.reporting.excerpts import text_evidence
 
 
+class PromptRuleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    category: str = Field(min_length=1)
+    severity: str = "medium"
+    languages: List[str] = Field(default_factory=lambda: ["generic"], min_length=1)
+    patterns: List[str] = Field(min_length=1)
+
+    @field_validator("severity")
+    @classmethod
+    def known_severity(cls, value: str) -> str:
+        if value not in {"low", "medium", "high", "critical"}:
+            raise ValueError("unknown severity: %s" % value)
+        return value
+
+
+class PromptRuleBundleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rules: List[PromptRuleConfig] = Field(min_length=1)
+
+
 class PromptRule:
-    def __init__(self, raw: dict) -> None:
-        self.id = raw["id"]
-        self.category = raw["category"]
-        self.severity = raw.get("severity", "medium")
-        self.languages = raw.get("languages", ["generic"])
+    def __init__(self, raw: PromptRuleConfig) -> None:
+        self.id = raw.id
+        self.category = raw.category
+        self.severity = raw.severity
+        self.languages = raw.languages
         self.patterns = []
-        for pattern in raw.get("patterns", []):
+        for pattern in raw.patterns:
             try:
                 self.patterns.append(re.compile(pattern, re.IGNORECASE | re.UNICODE))
             except re.error as exc:
@@ -37,13 +62,36 @@ class PromptRuleBundle:
     @classmethod
     def load(cls, *paths: Path) -> "PromptRuleBundle":
         rules: List[PromptRule] = []
+        seen_ids = set()
         for path in paths:
             if not path.exists():
-                continue
+                raise ConfigurationError("missing prompt rule bundle: %s" % path)
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-            if isinstance(data, dict):
-                data = data.get("rules", [])
-            for raw in data:
+            try:
+                bundle = PromptRuleBundleConfig.model_validate(data)
+            except ValidationError as exc:
+                raise ConfigurationError("invalid prompt rule bundle %s: %s" % (path, exc)) from exc
+            for raw in bundle.rules:
+                if raw.id in seen_ids:
+                    raise ConfigurationError("duplicate prompt rule id: %s" % raw.id)
+                seen_ids.add(raw.id)
+                rules.append(PromptRule(raw))
+        return cls(rules)
+
+    @classmethod
+    def load_default(cls) -> "PromptRuleBundle":
+        rules: List[PromptRule] = []
+        seen_ids = set()
+        for relative in [("prompt_rules", "generic.yaml"), ("prompt_rules", "en.yaml")]:
+            data = yaml.safe_load(read_config_text(relative)) or {}
+            try:
+                bundle = PromptRuleBundleConfig.model_validate(data)
+            except ValidationError as exc:
+                raise ConfigurationError("invalid prompt rule bundle %s: %s" % ("/".join(relative), exc)) from exc
+            for raw in bundle.rules:
+                if raw.id in seen_ids:
+                    raise ConfigurationError("duplicate prompt rule id: %s" % raw.id)
+                seen_ids.add(raw.id)
                 rules.append(PromptRule(raw))
         return cls(rules)
 
@@ -99,4 +147,3 @@ class PromptRuleBundle:
                 )
                 break
         return findings
-

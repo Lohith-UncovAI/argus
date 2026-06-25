@@ -282,6 +282,110 @@
       "title": "CoverageAssessment",
       "type": "object"
     },
+    "DetectorExecution": {
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "detector_id": {
+          "title": "Detector Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "status": {
+          "$ref": "#/$defs/DetectorStatus"
+        },
+        "tool_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Version"
+        }
+      },
+      "required": [
+        "detector_id",
+        "status",
+        "state"
+      ],
+      "title": "DetectorExecution",
+      "type": "object"
+    },
     "DetectorFinding": {
       "properties": {
         "attack_likelihood": {
@@ -404,6 +508,19 @@
       ],
       "title": "DetectorFinding",
       "type": "object"
+    },
+    "DetectorStatus": {
+      "enum": [
+        "SUCCESS",
+        "NO_EVIDENCE",
+        "UNSUPPORTED",
+        "TOOL_NOT_INSTALLED",
+        "TIMEOUT",
+        "ERROR",
+        "NOT_TESTED"
+      ],
+      "title": "DetectorStatus",
+      "type": "string"
     },
     "EpistemicState": {
       "enum": [
@@ -590,62 +707,6 @@
       "title": "ModuleStatus",
       "type": "object"
     },
-    "Observation": {
-      "properties": {
-        "confidence": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Confidence"
-        },
-        "detector_id": {
-          "title": "Detector Id",
-          "type": "string"
-        },
-        "observation_id": {
-          "title": "Observation Id",
-          "type": "string"
-        },
-        "source_artifact_id": {
-          "title": "Source Artifact Id",
-          "type": "string"
-        },
-        "transformation_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Transformation Id"
-        },
-        "type": {
-          "title": "Type",
-          "type": "string"
-        },
-        "value": {
-          "title": "Value",
-          "type": "object"
-        }
-      },
-      "required": [
-        "observation_id",
-        "type",
-        "source_artifact_id",
-        "detector_id"
-      ],
-      "title": "Observation",
-      "type": "object"
-    },
     "PolicyAction": {
       "enum": [
         "ALLOW_ORIGINAL",
@@ -722,6 +783,134 @@
         "action"
       ],
       "title": "PolicyDecision",
+      "type": "object"
+    },
+    "PublicTextObservation": {
+      "properties": {
+        "classification": {
+          "title": "Classification",
+          "type": "string"
+        },
+        "detector": {
+          "title": "Detector",
+          "type": "string"
+        },
+        "escaped_excerpt": {
+          "title": "Escaped Excerpt",
+          "type": "string"
+        },
+        "length": {
+          "title": "Length",
+          "type": "integer"
+        },
+        "location": {
+          "title": "Location",
+          "type": "object"
+        },
+        "observation_id": {
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "transformation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transformation"
+        }
+      },
+      "required": [
+        "observation_id",
+        "source_artifact_id",
+        "source",
+        "detector",
+        "classification",
+        "escaped_excerpt",
+        "sha256",
+        "length"
+      ],
+      "title": "PublicTextObservation",
+      "type": "object"
+    },
+    "ReleaseGrant": {
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PolicyAction"
+        },
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "grant_id": {
+          "title": "Grant Id",
+          "type": "string"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "scan_id": {
+          "title": "Scan Id",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "transformation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transformation Id"
+        }
+      },
+      "required": [
+        "grant_id",
+        "scan_id",
+        "artifact_id",
+        "sha256",
+        "role",
+        "action",
+        "media_type",
+        "reason"
+      ],
+      "title": "ReleaseGrant",
       "type": "object"
     },
     "ScanMode": {
@@ -810,6 +999,13 @@
     "decision": {
       "$ref": "#/$defs/PolicyDecision"
     },
+    "detector_executions": {
+      "items": {
+        "$ref": "#/$defs/DetectorExecution"
+      },
+      "title": "Detector Executions",
+      "type": "array"
+    },
     "errors": {
       "items": {
         "$ref": "#/$defs/ErrorRecord"
@@ -847,9 +1043,16 @@
     },
     "observations": {
       "items": {
-        "$ref": "#/$defs/Observation"
+        "$ref": "#/$defs/PublicTextObservation"
       },
       "title": "Observations",
+      "type": "array"
+    },
+    "release_grants": {
+      "items": {
+        "$ref": "#/$defs/ReleaseGrant"
+      },
+      "title": "Release Grants",
       "type": "array"
     },
     "scan_id": {

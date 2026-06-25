@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      ARGUS_OFFLINE_STRICT: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+      - name: Verify schemas are current
+        run: |
+          uv run python scripts/export_json_schema.py
+          git diff --exit-code schemas
+      - name: Run tests
+        run: uv run pytest

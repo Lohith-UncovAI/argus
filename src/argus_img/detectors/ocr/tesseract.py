@@ -23,6 +23,7 @@ def analyze_with_tesseract(
     artifact_paths: Iterable[tuple],
     scan_id: str,
     timeout_seconds: int,
+    max_output_bytes: int = 200_000,
 ) -> DetectorReport:
     if not tesseract_available():
         return detector_report(
@@ -32,6 +33,7 @@ def analyze_with_tesseract(
             EpistemicState.UNSUPPORTED,
             reason="tool_not_installed",
             optional=True,
+            category="prompt_injection",
         )
     observations: List[TextObservation] = []
     errors: List[str] = []
@@ -41,7 +43,7 @@ def analyze_with_tesseract(
             ["tesseract", str(path), "stdout", "--psm", "6"],
             timeout=timeout_seconds,
             cwd=Path(path).parent,
-            max_output_bytes=200_000,
+            max_output_bytes=max_output_bytes,
         )
         if result.timed_out:
             errors.append("%s: timeout" % artifact.artifact_id)
@@ -66,10 +68,24 @@ def analyze_with_tesseract(
                 value={"artifact_label": label},
             )
         )
-    status = DetectorStatus.SUCCESS if observations else DetectorStatus.NO_EVIDENCE
-    state = EpistemicState.CONFIRMED if observations else EpistemicState.NO_EVIDENCE_FOUND
-    report = detector_report("detector:tesseract", "OCR", status, state, observations=observations, optional=True)
+    if observations:
+        status = DetectorStatus.SUCCESS
+        state = EpistemicState.CONFIRMED
+    elif errors:
+        status = DetectorStatus.ERROR
+        state = EpistemicState.ERROR
+    else:
+        status = DetectorStatus.NO_EVIDENCE
+        state = EpistemicState.NO_EVIDENCE_FOUND
+    report = detector_report(
+        "detector:tesseract",
+        "OCR",
+        status,
+        state,
+        observations=observations,
+        optional=True,
+        category="prompt_injection",
+    )
     report.errors = errors
     report.execution.tool_version = version
     return report
-

@@ -1,0 +1,14 @@
+rules:
+  - id: PI-GENERIC-EXFIL-001
+    category: data_exfiltration
+    severity: high
+    languages: [generic]
+    patterns:
+      - '\b(exfiltrate|upload|send)\b.{0,80}\b(data|file|secret|token|password)\b'
+  - id: PI-GENERIC-BYPASS-001
+    category: policy_bypass
+    severity: high
+    languages: [generic]
+    patterns:
+      - '\b(jailbreak|bypass|disable)\b.{0,80}\b(policy|safety|guardrails?)\b'
+

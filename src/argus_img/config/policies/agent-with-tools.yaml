@@ -1,0 +1,60 @@
+profile: AGENT_WITH_TOOLS
+rules:
+  - id: quarantine-known-malware
+    priority: 1000
+    when:
+      category: malware
+      state_in: [CONFIRMED, HIGHLY_LIKELY]
+    action: QUARANTINE
+    summary: Known or highly likely malware evidence was found.
+  - id: quarantine-embedded-executable
+    priority: 950
+    when:
+      category: embedded_payload
+      type: executable
+      state: CONFIRMED
+    action: QUARANTINE
+    summary: Embedded executable content was found.
+  - id: block-confirmed-prompt-injection
+    priority: 900
+    when:
+      category: prompt_injection
+      state_in: [CONFIRMED, HIGHLY_LIKELY]
+    action: BLOCK
+    summary: Active prompt-injection instructions were detected.
+  - id: review-possible-prompt-injection
+    priority: 700
+    when:
+      category: prompt_injection
+      state: POSSIBLE
+    action: REVIEW
+    summary: Possible prompt-injection content needs review.
+  - id: review-embedded-payload
+    priority: 650
+    when:
+      category: embedded_payload
+      state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]
+    action: REVIEW
+    summary: Embedded or appended payload evidence needs review.
+  - id: reconstructed-only-on-fragile-signal
+    priority: 600
+    when:
+      category: adversarial_instability
+      state_in: [POSSIBLE, HIGHLY_LIKELY]
+    action: ALLOW_RECONSTRUCTED_ONLY
+    summary: Release only reconstructed content.
+  - id: public-redact-location
+    priority: 500
+    when:
+      category: privacy
+      reason_code: GPS_PRESENT
+    action: ALLOW_WITH_REDACTION
+    summary: Privacy-sensitive metadata should be redacted.
+  - id: review-privacy-sensitive-text
+    priority: 450
+    when:
+      category: privacy
+      state: CONFIRMED
+    action: ALLOW_WITH_REDACTION
+    summary: Privacy-sensitive text was detected.
+

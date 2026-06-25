@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from argus_img.core.enums import UseProfile
 
 
@@ -14,7 +12,5 @@ PROFILE_FILES = {
     UseProfile.OCR_EXTRACTION: "human-view.yaml",
 }
 
-
-def policy_path(profile: UseProfile) -> Path:
-    return Path("config/policies") / PROFILE_FILES[profile]
-
+def policy_relative_path(profile: UseProfile) -> tuple[str, str]:
+    return ("policies", PROFILE_FILES[profile])

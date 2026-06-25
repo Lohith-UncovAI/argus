@@ -3,8 +3,8 @@ import shutil
 from fastapi import APIRouter
 
 from argus_img import __version__
-from argus_img.core.config import config_hash, load_config
-from argus_img.core.hashing import sha256_file
+from argus_img.core.config import config_hash, load_config, read_config_text
+from argus_img.core.hashing import sha256_bytes
 from argus_img.core.offline_guard import OfflineGuard
 
 router = APIRouter()
@@ -14,11 +14,12 @@ router = APIRouter()
 def attestation():
     config = load_config()
     rule_hashes = {}
-    for path in ["config/prompt_rules/generic.yaml", "config/prompt_rules/en.yaml"]:
+    for path in [("prompt_rules", "generic.yaml"), ("prompt_rules", "en.yaml")]:
+        key = "/".join(path)
         try:
-            rule_hashes[path] = sha256_file(__import__("pathlib").Path(path))
+            rule_hashes[key] = sha256_bytes(read_config_text(path).encode("utf-8"))
         except Exception:
-            rule_hashes[path] = None
+            rule_hashes[key] = None
     return {
         "application": "argus-img",
         "version": __version__,
@@ -41,4 +42,3 @@ def attestation():
         "self_test_status": "pass",
         "air_gap_claim": False,
     }
-

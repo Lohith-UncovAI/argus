@@ -1,4 +1,197 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Policy"
+  "$defs": {
+    "EpistemicState": {
+      "enum": [
+        "CONFIRMED",
+        "HIGHLY_LIKELY",
+        "POSSIBLE",
+        "NO_EVIDENCE_FOUND",
+        "INCONCLUSIVE",
+        "NOT_TESTED",
+        "UNSUPPORTED",
+        "ERROR"
+      ],
+      "title": "EpistemicState",
+      "type": "string"
+    },
+    "PolicyAction": {
+      "enum": [
+        "ALLOW_ORIGINAL",
+        "ALLOW_RECONSTRUCTED_ONLY",
+        "ALLOW_WITH_REDACTION",
+        "REVIEW",
+        "BLOCK",
+        "QUARANTINE",
+        "UNSUPPORTED"
+      ],
+      "title": "PolicyAction",
+      "type": "string"
+    },
+    "PolicyCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "greater_than_or_equal": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Greater Than Or Equal"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "severity_in": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity In"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EpistemicState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state_in": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EpistemicState"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State In"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "title": "PolicyCondition",
+      "type": "object"
+    },
+    "PolicyRule": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PolicyAction"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/PolicyCondition"
+        }
+      },
+      "required": [
+        "id",
+        "when",
+        "action"
+      ],
+      "title": "PolicyRule",
+      "type": "object"
+    },
+    "UseProfile": {
+      "enum": [
+        "ARCHIVE_ONLY",
+        "HUMAN_VIEW",
+        "OCR_EXTRACTION",
+        "VLM_READ_ONLY",
+        "RAG_INGESTION",
+        "AGENT_WITH_TOOLS",
+        "SECURITY_FORENSICS",
+        "PUBLIC_REPUBLISHING"
+      ],
+      "title": "UseProfile",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "$ref": "#/$defs/UseProfile"
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/PolicyRule"
+      },
+      "minItems": 1,
+      "title": "Rules",
+      "type": "array"
+    }
+  },
+  "required": [
+    "profile",
+    "rules"
+  ],
+  "title": "PolicyDocument",
+  "type": "object"
 }

@@ -55,7 +55,7 @@ def _validate_config() -> None:
 
 
 def _validate_rules() -> None:
-    bundle = PromptRuleBundle.load(Path("config/prompt_rules/generic.yaml"), Path("config/prompt_rules/en.yaml"))
+    bundle = PromptRuleBundle.load_default()
     print(json.dumps({"status": "ok", "rules": len(bundle.rules)}, indent=2))
 
 
@@ -131,4 +131,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

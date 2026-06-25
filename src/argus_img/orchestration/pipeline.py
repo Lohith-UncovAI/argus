@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from argus_img import __version__
 from argus_img.artifacts.cleanup import cleanup_job_dir
+from argus_img.artifacts.release import apply_release_grants
 from argus_img.artifacts.store import ArtifactStore
+from argus_img.core.budget import ResourceBudget
 from argus_img.core.config import AppConfig, load_config
+from argus_img.core.detector_registry import load_detector_registry
 from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction
 from argus_img.core.exceptions import IntakeRejected
 from argus_img.core.hashing import sha256_file
@@ -15,7 +19,9 @@ from argus_img.core.models import (
     Artifact,
     CategoryAssessment,
     CoverageAssessment,
+    DetectorExecution,
     DetectorFinding,
+    DetectorReport,
     ErrorRecord,
     FileDescriptor,
     Limitation,
@@ -54,6 +60,7 @@ from argus_img.intake.mime import detect_magic
 from argus_img.intake.validation import validate_image_file
 from argus_img.orchestration.context import create_scan_context
 from argus_img.policy.engine import PolicyEngine
+from argus_img.policy.coverage import mandatory_coverage_decision
 from argus_img.reconstruction.canonical import create_canonical_artifacts
 from argus_img.reporting.serialization import report_to_json
 from argus_img.transforms.registry import generate_fast_transformations
@@ -67,6 +74,45 @@ def _scanner_info(request: ScanRequest, config_hash: str) -> ScannerInfo:
         use_profile=request.use_profile,
         configuration_hash=config_hash,
     )
+
+
+def _execution(
+    detector_id: str,
+    status: DetectorStatus,
+    state: EpistemicState,
+    family: str,
+    category: str,
+    required: bool = False,
+    reason: Optional[str] = None,
+) -> DetectorExecution:
+    now = datetime.now(timezone.utc)
+    return DetectorExecution(
+        detector_id=detector_id,
+        status=status,
+        state=state,
+        family=family,
+        category=category,
+        required=required,
+        started_at=now,
+        completed_at=now,
+        reason=reason,
+    )
+
+
+def _record_detector_report(
+    report: DetectorReport,
+    executions: List[DetectorExecution],
+    findings: List[DetectorFinding],
+    observations: List[TextObservation],
+) -> None:
+    executions.append(report.execution)
+    findings.extend(report.findings)
+    observations.extend([obs for obs in report.observations if isinstance(obs, TextObservation)])
+
+
+def _consume_text_budget(budget: ResourceBudget, observations: List[TextObservation]) -> None:
+    for observation in observations:
+        budget.consume_text(observation.raw_text)
 
 
 def _rejected_report(
@@ -91,7 +137,16 @@ def _rejected_report(
         recommended_action=PolicyAction.QUARANTINE,
         evidence={"reason": reason},
     )
-    assessments = build_assessments([finding])
+    execution = _execution(
+        "detector:intake-validation",
+        DetectorStatus.ERROR,
+        EpistemicState.ERROR,
+        family="intake",
+        category="file_security",
+        required=True,
+        reason=reason,
+    )
+    assessments = build_assessments([finding], [execution])
     decision = PolicyDecision(
         action=PolicyAction.QUARANTINE,
         safe_claim=False,
@@ -110,6 +165,9 @@ def _rejected_report(
         assessments=assessments,
         findings=[finding],
         artifacts=artifacts,
+        observations=[],
+        detector_executions=[execution],
+        release_grants=[],
         coverage=CoverageAssessment(original_container="low", universal_absence_claim=False),
         module_status={
             "intake": ModuleStatus(name="intake", status=EpistemicState.ERROR, reason=reason)
@@ -128,6 +186,8 @@ def _rejected_report(
 def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optional[AppConfig] = None) -> ScanReport:
     request = request or ScanRequest(original_filename=path.name)
     config = config or load_config()
+    registry = load_detector_registry()
+    budget = ResourceBudget(config.limits)
     store = ArtifactStore(Path(config.data_dir))
     context = create_scan_context(store, request, config)
     scan_id = context.scan_id
@@ -135,6 +195,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
     artifacts: Dict[str, Artifact] = {}
     observations: List[TextObservation] = []
     findings: List[DetectorFinding] = []
+    detector_executions: List[DetectorExecution] = []
     module_status: Dict[str, ModuleStatus] = {"artifact_store": store.capability_status()}
     errors: List[ErrorRecord] = []
     limitations: List[Limitation] = [
@@ -168,6 +229,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             release_eligible=False,
             max_bytes=config.limits.max_input_bytes,
         )
+        budget.consume_artifact(original.size_bytes)
         artifacts["original"] = original
         try:
             file_descriptor = validate_image_file(path, request.declared_mime, config.limits)
@@ -187,6 +249,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             report = _rejected_report(scan_id, request, context.config_hash, file_descriptor, artifacts, str(exc))
             store.save_report(scan_id, report_to_json(report))
             return report
+        budget.consume_decoded_pixels((file_descriptor.width or 0) * (file_descriptor.height or 0) * max(file_descriptor.frames, 1))
 
         trailing = detect_trailing_bytes(path, file_descriptor.format, original.artifact_id, "finding:%s:trailing-bytes" % scan_id)
         if trailing:
@@ -195,17 +258,16 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         findings.extend(differential_findings)
         module_status["opencv_decoder"] = opencv_status
 
-        canonical = create_canonical_artifacts(store, original, path, scan_id)
+        canonical = create_canonical_artifacts(store, original, path, scan_id, budget)
         artifacts.update(canonical)
         canonical_path = store.resolve_path(canonical["canonical_lossless"])
         if request.mode.value in {"deep", "forensic"} and file_descriptor.frames > 1:
-            artifacts.update(extract_frames(store, original, path, scan_id, config.limits.max_frames))
-        transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id)
+            artifacts.update(extract_frames(store, original, path, scan_id, config.limits.max_frames, budget))
+        transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id, budget)
         artifacts.update(transforms)
 
-        metadata_report = analyze_builtin_metadata(path, original.artifact_id, scan_id, request.include_raw_text)
-        findings.extend(metadata_report.findings)
-        observations.extend([obs for obs in metadata_report.observations if isinstance(obs, TextObservation)])
+        metadata_report = analyze_builtin_metadata(path, original.artifact_id, scan_id, include_raw_text=False)
+        _record_detector_report(metadata_report, detector_executions, findings, observations)
         module_status["metadata_builtin"] = ModuleStatus(
             name="metadata_builtin",
             status=metadata_report.execution.state,
@@ -215,12 +277,11 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             path,
             original.artifact_id,
             scan_id,
-            config.limits.parser_timeout_seconds,
+            min(config.limits.parser_timeout_seconds, max(1, int(budget.remaining_seconds()))),
             config.limits.max_metadata_bytes,
-            request.include_raw_text,
+            include_raw_text=False,
         )
-        findings.extend(exiftool_report.findings)
-        observations.extend([obs for obs in exiftool_report.observations if isinstance(obs, TextObservation)])
+        _record_detector_report(exiftool_report, detector_executions, findings, observations)
         module_status["exiftool"] = exiftool_status(exiftool_report)
         for error in exiftool_report.errors:
             errors.append(ErrorRecord(source="exiftool", message=error))
@@ -243,8 +304,13 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             ("flattened_white", canonical["flattened_white"], store.resolve_path(canonical["flattened_white"])),
             ("flattened_black", canonical["flattened_black"], store.resolve_path(canonical["flattened_black"])),
         ] + [(label, artifact, store.resolve_path(artifact)) for label, artifact in transforms.items()]
-        ocr_report = analyze_with_tesseract(ocr_inputs, scan_id, config.limits.detector_timeout_seconds)
-        observations.extend([obs for obs in ocr_report.observations if isinstance(obs, TextObservation)])
+        ocr_report = analyze_with_tesseract(
+            ocr_inputs,
+            scan_id,
+            min(config.limits.detector_timeout_seconds, max(1, int(budget.remaining_seconds()))),
+            config.limits.max_subprocess_output_bytes,
+        )
+        _record_detector_report(ocr_report, detector_executions, findings, observations)
         module_status["tesseract"] = ModuleStatus(
             name="tesseract",
             status=ocr_report.execution.state,
@@ -254,22 +320,65 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         for error in ocr_report.errors:
             errors.append(ErrorRecord(source="tesseract", message=error))
 
-        qr_report = analyze_qr(ocr_inputs, scan_id, request.include_raw_text)
-        observations.extend([obs for obs in qr_report.observations if isinstance(obs, TextObservation)])
-        findings.extend(qr_report.findings)
+        qr_report = analyze_qr(ocr_inputs, scan_id, include_raw_text=False)
+        _record_detector_report(qr_report, detector_executions, findings, observations)
         module_status["qr"] = ModuleStatus(name="qr", status=qr_report.execution.state, reason=qr_report.execution.reason)
 
         observations = merge_text_observations(observations)
+        _consume_text_budget(budget, observations)
         derived_map = {}
         for obs in observations:
             derived = derive_text_candidates(obs)
             if derived:
                 derived_map[obs.observation_id] = [item.text for item in derived]
-        rules = PromptRuleBundle.load(Path("config/prompt_rules/generic.yaml"), Path("config/prompt_rules/en.yaml"))
-        findings.extend(rules.analyze_texts(observations, scan_id, request.include_raw_text, derived_map))
-        findings.extend(analyze_privacy(observations, scan_id, request.include_raw_text))
-        findings.extend(analyze_phishing(observations, scan_id, request.include_raw_text))
-        findings.extend(analyze_visible_watermarks(observations, scan_id))
+                for item in derived:
+                    budget.consume_text(item.text)
+        rules = PromptRuleBundle.load_default()
+        prompt_findings = rules.analyze_texts(observations, scan_id, include_raw_text=False, derived_texts=derived_map)
+        findings.extend(prompt_findings)
+        detector_executions.append(
+            _execution(
+                "detector:prompt-rules",
+                DetectorStatus.SUCCESS if prompt_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if prompt_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="prompt",
+                category="prompt_injection",
+                required=True,
+            )
+        )
+        privacy_findings = analyze_privacy(observations, scan_id, include_raw_text=False)
+        findings.extend(privacy_findings)
+        detector_executions.append(
+            _execution(
+                "detector:privacy-rules",
+                DetectorStatus.SUCCESS if privacy_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if privacy_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="privacy",
+                category="privacy",
+            )
+        )
+        phishing_findings = analyze_phishing(observations, scan_id, include_raw_text=False)
+        findings.extend(phishing_findings)
+        detector_executions.append(
+            _execution(
+                "detector:phishing-rules",
+                DetectorStatus.SUCCESS if phishing_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if phishing_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="phishing",
+                category="phishing",
+            )
+        )
+        watermark_findings = analyze_visible_watermarks(observations, scan_id)
+        findings.extend(watermark_findings)
+        detector_executions.append(
+            _execution(
+                "detector:visible-watermark-rules",
+                DetectorStatus.SUCCESS if watermark_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if watermark_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="watermarks",
+                category="watermarks",
+            )
+        )
 
         try:
             module_status["steganalysis_statistics"] = ModuleStatus(
@@ -285,8 +394,12 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             )
 
         findings = deduplicate_findings(findings)
-        assessments = build_assessments(findings)
+        assessments = build_assessments(findings, detector_executions)
         decision = PolicyEngine.load_for_profile(request.use_profile).decide(findings)
+        coverage_decision = mandatory_coverage_decision(request.use_profile, registry, detector_executions)
+        if coverage_decision is not None:
+            decision = coverage_decision
+        release_grants = apply_release_grants(store, scan_id, artifacts, decision)
         timings = {"total_ms": (time.monotonic() - started) * 1000}
         report = ScanReport(
             scan_id=scan_id,
@@ -296,7 +409,9 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             assessments=assessments,
             findings=findings,
             artifacts=artifacts,
-            observations=observations,
+            observations=[observation.to_public() for observation in observations],
+            detector_executions=detector_executions,
+            release_grants=release_grants,
             coverage=CoverageAssessment(
                 original_container="high",
                 all_frames="complete" if file_descriptor.frames <= 1 else "partial",
@@ -318,6 +433,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             timings_ms=timings,
             evidence_graph=build_evidence_graph(artifacts, observations, findings),
         )
+        report.internal_observations = observations
         store.save_report(scan_id, report_to_json(report))
         return report
     finally:

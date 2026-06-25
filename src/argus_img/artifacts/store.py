@@ -5,12 +5,12 @@ import os
 import tempfile
 import fcntl
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from argus_img.core.enums import EpistemicState
-from argus_img.core.exceptions import ArtifactAccessDenied, IntakeRejected
+from argus_img.core.exceptions import ArtifactAccessDenied, ArtifactNotReleased, IntakeRejected
 from argus_img.core.hashing import bare_sha256, sha256_bytes, sha256_file
-from argus_img.core.models import Artifact, ArtifactTransformation, ModuleStatus
+from argus_img.core.models import Artifact, ArtifactTransformation, ModuleStatus, PolicyDecision, ReleaseGrant
 
 
 class ArtifactStore:
@@ -22,6 +22,7 @@ class ArtifactStore:
         self.jobs_dir = self.base_dir / "jobs"
         self.temporary_dir = self.base_dir / "temporary"
         self.index_path = self.base_dir / "artifacts" / "index.json"
+        self.release_grants_path = self.base_dir / "artifacts" / "release_grants.json"
         for directory in [
             self.quarantine_dir,
             self.artifacts_dir,
@@ -70,6 +71,21 @@ class ArtifactStore:
             tmp_path = Path(tmp.name)
         os.replace(str(tmp_path), str(self.index_path))
 
+    def _load_release_grants(self) -> Dict[str, dict]:
+        if not self.release_grants_path.exists():
+            return {}
+        with self.release_grants_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _save_release_grants(self, grants: Dict[str, dict]) -> None:
+        payload = json.dumps(grants, sort_keys=True, indent=2)
+        with tempfile.NamedTemporaryFile(dir=str(self.release_grants_path.parent), delete=False, mode="w", encoding="utf-8") as tmp:
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp_path = Path(tmp.name)
+        os.replace(str(tmp_path), str(self.release_grants_path))
+
     def _index_artifact(self, artifact: Artifact) -> None:
         lock_path = self.index_path.parent / ".index.lock"
         with lock_path.open("w") as lock:
@@ -78,6 +94,20 @@ class ArtifactStore:
             index[artifact.artifact_id] = artifact.model_dump(mode="json")
             self._save_index(index)
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def _update_artifact_release_flag(self, artifact_id: str, release_eligible: bool) -> Artifact:
+        lock_path = self.index_path.parent / ".index.lock"
+        with lock_path.open("w") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            index = self._load_index()
+            raw = index.get(artifact_id)
+            if raw is None:
+                raise ArtifactAccessDenied("unknown artifact")
+            raw["release_eligible"] = release_eligible
+            index[artifact_id] = raw
+            self._save_index(index)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return Artifact.model_validate(raw)
 
     def create_job_dir(self, scan_id: str) -> Path:
         safe = "".join(ch for ch in scan_id if ch.isalnum() or ch in {"-", "_"})
@@ -116,7 +146,7 @@ class ArtifactStore:
             derived_from=derived_from,
             transformation=transformation,
             storage_reference=self._safe_relative(dest),
-            release_eligible=release_eligible,
+            release_eligible=False,
             role=role,
             width=width,
             height=height,
@@ -163,11 +193,51 @@ class ArtifactStore:
             size_bytes=size,
             created_by=created_by,
             storage_reference=self._safe_relative(dest),
-            release_eligible=release_eligible,
+            release_eligible=False,
             role=role,
         )
         self._index_artifact(artifact)
         return artifact
+
+    def grant_release(self, scan_id: str, artifact: Artifact, decision: PolicyDecision, reason: str) -> ReleaseGrant:
+        if artifact.role == "original" or artifact.role.startswith("frame-"):
+            raise ArtifactAccessDenied("artifact role cannot be released")
+        if artifact.role not in {"canonical_lossy", "redacted"}:
+            raise ArtifactAccessDenied("artifact role is analysis-only")
+        grant = ReleaseGrant(
+            grant_id="grant:%s:%s" % (scan_id, artifact.artifact_id.rsplit(":", 1)[-1]),
+            scan_id=scan_id,
+            artifact_id=artifact.artifact_id,
+            sha256=artifact.sha256,
+            role=artifact.role,
+            action=decision.action,
+            media_type=artifact.media_type,
+            transformation_id=artifact.transformation.transformation_id if artifact.transformation else None,
+            reason=reason,
+        )
+        lock_path = self.release_grants_path.parent / ".release-grants.lock"
+        with lock_path.open("w") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            grants = self._load_release_grants()
+            grants[grant.grant_id] = grant.model_dump(mode="json")
+            self._save_release_grants(grants)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        self._update_artifact_release_flag(artifact.artifact_id, True)
+        artifact.release_eligible = True
+        return grant
+
+    def grants_for_scan(self, scan_id: str) -> List[ReleaseGrant]:
+        return [
+            ReleaseGrant.model_validate(raw)
+            for raw in self._load_release_grants().values()
+            if raw.get("scan_id") == scan_id
+        ]
+
+    def grant_for_artifact(self, artifact_id: str) -> Optional[ReleaseGrant]:
+        for raw in self._load_release_grants().values():
+            if raw.get("artifact_id") == artifact_id:
+                return ReleaseGrant.model_validate(raw)
+        return None
 
     def resolve_path(self, artifact: Artifact) -> Path:
         path = (self.base_dir / artifact.storage_reference).resolve()
@@ -181,8 +251,14 @@ class ArtifactStore:
         if raw is None:
             raise ArtifactAccessDenied("unknown artifact")
         artifact = Artifact.model_validate(raw)
-        if release_only and not artifact.release_eligible:
-            raise ArtifactAccessDenied("artifact is not release eligible")
+        if release_only:
+            grant = self.grant_for_artifact(artifact.artifact_id)
+            if grant is None or not artifact.release_eligible:
+                raise ArtifactNotReleased("artifact is not released")
+            if artifact.role in {"original"} or artifact.role.startswith("frame-"):
+                raise ArtifactNotReleased("artifact role cannot be released")
+            if artifact.role not in {"canonical_lossy", "redacted"}:
+                raise ArtifactNotReleased("artifact role is analysis-only")
         return artifact
 
     def save_report(self, scan_id: str, report_json: str) -> Path:

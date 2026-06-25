@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from PIL import Image, ImageOps
 
 from argus_img.artifacts.store import ArtifactStore
+from argus_img.core.budget import ResourceBudget
 from argus_img.core.models import Artifact, ArtifactTransformation
 from argus_img.decoding.pillow_decoder import encode_png
 
@@ -40,25 +41,20 @@ def generate_fast_transformations(
     source_artifact: Artifact,
     source_path: Path,
     scan_id: str,
+    budget: Optional[ResourceBudget] = None,
 ) -> Dict[str, Artifact]:
     with Image.open(source_path) as raw:
         image = raw.convert("RGBA")
     gray = ImageOps.grayscale(image)
-    transforms = {
-        "grayscale": gray,
-        "otsu-threshold": _otsu_threshold(gray),
-        "inverted-grayscale": ImageOps.invert(gray),
-    }
-    channels = image.split()
-    channel_names = ["red-channel", "green-channel", "blue-channel", "alpha-channel"]
-    for name, channel in zip(channel_names, channels):
-        transforms[name] = channel
-    enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
-    transforms["2x-enlargement"] = enlarged
     artifacts: Dict[str, Artifact] = {}
-    for label, transformed in transforms.items():
+
+    def store_transformed(label: str, transformed: Image.Image) -> None:
         if transformed.mode not in {"RGB", "RGBA"}:
             transformed = transformed.convert("RGB")
+        data = encode_png(transformed)
+        if budget:
+            budget.consume_transformed_pixels(transformed.width * transformed.height)
+            budget.consume_artifact(len(data))
         transformation = ArtifactTransformation(
             transformation_id="transform:%s" % label,
             type=label.replace("-", "_"),
@@ -67,7 +63,7 @@ def generate_fast_transformations(
             resource_cost_class="low",
         )
         artifacts[label] = store.store_bytes(
-            encode_png(transformed),
+            data,
             artifact_id="artifact:%s:%s" % (scan_id, label),
             media_type="image/png",
             created_by="transformation-bank",
@@ -78,5 +74,14 @@ def generate_fast_transformations(
             width=transformed.width,
             height=transformed.height,
         )
-    return artifacts
 
+    store_transformed("grayscale", gray)
+    store_transformed("otsu-threshold", _otsu_threshold(gray))
+    store_transformed("inverted-grayscale", ImageOps.invert(gray))
+    channels = image.split()
+    channel_names = ["red-channel", "green-channel", "blue-channel", "alpha-channel"]
+    for name, channel in zip(channel_names, channels):
+        store_transformed(name, channel)
+    enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
+    store_transformed("2x-enlargement", enlarged)
+    return artifacts

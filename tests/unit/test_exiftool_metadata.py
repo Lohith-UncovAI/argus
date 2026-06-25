@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from argus_img.core.enums import DetectorStatus, EpistemicState
@@ -8,10 +9,10 @@ from argus_img.detectors.metadata import analyze_with_exiftool, classify_metadat
 def _fake_exiftool(tmp_path: Path, stdout: str, exit_code: int = 0) -> str:
     tool = tmp_path / "fake exiftool"
     tool.write_text(
-        "#!/usr/bin/env python3\n"
+        "#!%s\n"
         "import sys\n"
         "sys.stdout.write(%r)\n"
-        "sys.exit(%d)\n" % (stdout, exit_code),
+        "sys.exit(%d)\n" % (sys.executable, stdout, exit_code),
         encoding="utf-8",
     )
     os.chmod(tool, 0o755)
@@ -69,4 +70,3 @@ def test_exiftool_invalid_json_is_error(tmp_path):
     assert report.execution.status == DetectorStatus.ERROR
     assert report.execution.state == EpistemicState.ERROR
     assert report.execution.reason.startswith("invalid_json")
-
