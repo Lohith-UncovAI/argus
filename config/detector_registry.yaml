@@ -1,0 +1,16 @@
+detectors:
+  - id: detector:metadata-builtin
+    family: metadata
+    required: true
+  - id: detector:exiftool
+    family: metadata
+    required: false
+  - id: detector:tesseract
+    family: OCR
+    required: false
+  - id: detector:qr-pyzbar
+    family: QR/barcode
+    required: false
+  - id: detector:prompt-rules
+    family: prompt
+    required: true

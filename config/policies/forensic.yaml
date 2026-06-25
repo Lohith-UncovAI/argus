@@ -1,0 +1,11 @@
+profile: SECURITY_FORENSICS
+rules:
+  - id: forensic-quarantine-malware
+    priority: 1000
+    when: {category: malware, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: QUARANTINE
+  - id: forensic-review-any-confirmed
+    priority: 200
+    when: {state: CONFIRMED}
+    action: REVIEW
+

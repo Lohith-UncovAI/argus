@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:noexec,nodev,nosuid,size=128m
+    volumes:
+      - ../data:/app/data:rw
+    pids_limit: 256
+    mem_limit: 1g
+

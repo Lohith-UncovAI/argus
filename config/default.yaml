@@ -1,0 +1,21 @@
+data_dir: data
+default_policy: agent-with-tools
+offline:
+  strict: false
+  allow_dns_configured: true
+limits:
+  max_input_bytes: 25000000
+  max_pixels_per_frame: 50000000
+  max_total_decoded_pixels: 150000000
+  max_width: 16384
+  max_height: 16384
+  max_frames: 30
+  max_metadata_bytes: 5000000
+  max_extracted_objects: 100
+  max_extracted_total_bytes: 50000000
+  max_recursive_depth: 3
+  max_text_bytes_per_source: 100000
+  parser_timeout_seconds: 10
+  detector_timeout_seconds: 30
+  full_scan_timeout_seconds: 120
+

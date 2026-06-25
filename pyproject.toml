@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-img"
+version = "0.1.0"
+description = "Offline image-security analysis and content-disarm system"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = [
+  "fastapi==0.110.0",
+  "pydantic==2.5.3",
+  "Pillow==11.3.0",
+  "PyYAML==6.0.3",
+  "python-magic==0.4.27",
+  "python-multipart==0.0.9",
+  "pyzbar==0.1.9",
+  "typer==0.12.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.4.2",
+  "pytest-asyncio==1.2.0",
+  "hypothesis==6.112.0",
+  "jsonschema==4.23.0",
+]
+opencv = ["opencv-python==4.10.0.84"]
+
+[project.scripts]
+argus-img = "argus_img.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

@@ -1,0 +1,884 @@
+{
+  "$defs": {
+    "Artifact": {
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "created_by": {
+          "title": "Created By",
+          "type": "string"
+        },
+        "derived_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From"
+        },
+        "frame_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frame Index"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "release_eligible": {
+          "default": false,
+          "title": "Release Eligible",
+          "type": "boolean"
+        },
+        "role": {
+          "default": "derived",
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "storage_reference": {
+          "title": "Storage Reference",
+          "type": "string"
+        },
+        "transformation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactTransformation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "media_type",
+        "size_bytes",
+        "created_by",
+        "storage_reference"
+      ],
+      "title": "Artifact",
+      "type": "object"
+    },
+    "ArtifactTransformation": {
+      "properties": {
+        "inverse_coordinate_mapping": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inverse Coordinate Mapping"
+        },
+        "parameters": {
+          "title": "Parameters",
+          "type": "object"
+        },
+        "reliability_class": {
+          "default": "forensic",
+          "title": "Reliability Class",
+          "type": "string"
+        },
+        "resource_cost_class": {
+          "default": "low",
+          "title": "Resource Cost Class",
+          "type": "string"
+        },
+        "transformation_id": {
+          "title": "Transformation Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transformation_id",
+        "type"
+      ],
+      "title": "ArtifactTransformation",
+      "type": "object"
+    },
+    "CategoryAssessment": {
+      "properties": {
+        "coverage": {
+          "default": "low",
+          "title": "Coverage",
+          "type": "string"
+        },
+        "finding_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Finding Ids",
+          "type": "array"
+        },
+        "impact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Impact"
+        },
+        "likelihood": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Likelihood"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "CategoryAssessment",
+      "type": "object"
+    },
+    "CoverageAssessment": {
+      "properties": {
+        "all_frames": {
+          "default": "partial",
+          "title": "All Frames",
+          "type": "string"
+        },
+        "common_steganography": {
+          "default": "low",
+          "title": "Common Steganography",
+          "type": "string"
+        },
+        "known_embedded_formats": {
+          "default": "low",
+          "title": "Known Embedded Formats",
+          "type": "string"
+        },
+        "low_contrast_text": {
+          "default": "low",
+          "title": "Low Contrast Text",
+          "type": "string"
+        },
+        "metadata_text": {
+          "default": "low",
+          "title": "Metadata Text",
+          "type": "string"
+        },
+        "model_specific_adversarial_attacks": {
+          "default": "not_tested",
+          "title": "Model Specific Adversarial Attacks",
+          "type": "string"
+        },
+        "original_container": {
+          "default": "medium",
+          "title": "Original Container",
+          "type": "string"
+        },
+        "registered_watermark_schemes": {
+          "default": "low",
+          "title": "Registered Watermark Schemes",
+          "type": "string"
+        },
+        "universal_absence_claim": {
+          "default": false,
+          "title": "Universal Absence Claim",
+          "type": "boolean"
+        },
+        "universal_attack_absence": {
+          "default": "impossible",
+          "title": "Universal Attack Absence",
+          "type": "string"
+        },
+        "unknown_steganography": {
+          "default": "low",
+          "title": "Unknown Steganography",
+          "type": "string"
+        },
+        "unknown_watermarks": {
+          "default": "unsupported",
+          "title": "Unknown Watermarks",
+          "type": "string"
+        },
+        "visible_text": {
+          "default": "low",
+          "title": "Visible Text",
+          "type": "string"
+        }
+      },
+      "title": "CoverageAssessment",
+      "type": "object"
+    },
+    "DetectorFinding": {
+      "properties": {
+        "attack_likelihood": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attack Likelihood"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "detector_confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detector Confidence"
+        },
+        "detector_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Detector Ids",
+          "type": "array"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "object"
+        },
+        "evidence_quality": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Quality"
+        },
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "impact": {
+          "default": "medium",
+          "title": "Impact",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Observation Ids",
+          "type": "array"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "source_artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Artifact Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding_id",
+        "category",
+        "type",
+        "state",
+        "severity"
+      ],
+      "title": "DetectorFinding",
+      "type": "object"
+    },
+    "EpistemicState": {
+      "enum": [
+        "CONFIRMED",
+        "HIGHLY_LIKELY",
+        "POSSIBLE",
+        "NO_EVIDENCE_FOUND",
+        "INCONCLUSIVE",
+        "NOT_TESTED",
+        "UNSUPPORTED",
+        "ERROR"
+      ],
+      "title": "EpistemicState",
+      "type": "string"
+    },
+    "ErrorRecord": {
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EpistemicState"
+            }
+          ],
+          "default": "ERROR"
+        }
+      },
+      "required": [
+        "source",
+        "message"
+      ],
+      "title": "ErrorRecord",
+      "type": "object"
+    },
+    "FileDescriptor": {
+      "properties": {
+        "declared_mime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Mime"
+        },
+        "detected_mime": {
+          "title": "Detected Mime",
+          "type": "string"
+        },
+        "format": {
+          "title": "Format",
+          "type": "string"
+        },
+        "frames": {
+          "default": 0,
+          "title": "Frames",
+          "type": "integer"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "original_filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Original Filename"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "size_bytes",
+        "sha256",
+        "detected_mime",
+        "format"
+      ],
+      "title": "FileDescriptor",
+      "type": "object"
+    },
+    "Limitation": {
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "limitation_id": {
+          "title": "Limitation Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "limitation_id",
+        "category",
+        "description"
+      ],
+      "title": "Limitation",
+      "type": "object"
+    },
+    "ModuleStatus": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/EpistemicState"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "title": "ModuleStatus",
+      "type": "object"
+    },
+    "Observation": {
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "detector_id": {
+          "title": "Detector Id",
+          "type": "string"
+        },
+        "observation_id": {
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "transformation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transformation Id"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "object"
+        }
+      },
+      "required": [
+        "observation_id",
+        "type",
+        "source_artifact_id",
+        "detector_id"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "PolicyAction": {
+      "enum": [
+        "ALLOW_ORIGINAL",
+        "ALLOW_RECONSTRUCTED_ONLY",
+        "ALLOW_WITH_REDACTION",
+        "REVIEW",
+        "BLOCK",
+        "QUARANTINE",
+        "UNSUPPORTED"
+      ],
+      "title": "PolicyAction",
+      "type": "string"
+    },
+    "PolicyDecision": {
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PolicyAction"
+        },
+        "explanation": {
+          "default": "",
+          "title": "Explanation",
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "safe_claim": {
+          "default": false,
+          "title": "Safe Claim",
+          "type": "boolean"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "triggered_policy_rules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Triggered Policy Rules",
+          "type": "array"
+        },
+        "winning_rule_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Winning Rule Id"
+        },
+        "winning_rule_priority": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Winning Rule Priority"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "PolicyDecision",
+      "type": "object"
+    },
+    "ScanMode": {
+      "enum": [
+        "fast",
+        "deep",
+        "forensic"
+      ],
+      "title": "ScanMode",
+      "type": "string"
+    },
+    "ScannerInfo": {
+      "properties": {
+        "configuration_hash": {
+          "title": "Configuration Hash",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ScanMode"
+        },
+        "name": {
+          "default": "argus-img",
+          "title": "Name",
+          "type": "string"
+        },
+        "offline_mode": {
+          "default": true,
+          "title": "Offline Mode",
+          "type": "boolean"
+        },
+        "use_profile": {
+          "$ref": "#/$defs/UseProfile"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "use_profile",
+        "configuration_hash"
+      ],
+      "title": "ScannerInfo",
+      "type": "object"
+    },
+    "UseProfile": {
+      "enum": [
+        "ARCHIVE_ONLY",
+        "HUMAN_VIEW",
+        "OCR_EXTRACTION",
+        "VLM_READ_ONLY",
+        "RAG_INGESTION",
+        "AGENT_WITH_TOOLS",
+        "SECURITY_FORENSICS",
+        "PUBLIC_REPUBLISHING"
+      ],
+      "title": "UseProfile",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "artifacts": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Artifact"
+      },
+      "title": "Artifacts",
+      "type": "object"
+    },
+    "assessments": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CategoryAssessment"
+      },
+      "title": "Assessments",
+      "type": "object"
+    },
+    "coverage": {
+      "$ref": "#/$defs/CoverageAssessment"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/$defs/PolicyDecision"
+    },
+    "errors": {
+      "items": {
+        "$ref": "#/$defs/ErrorRecord"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "evidence_graph": {
+      "title": "Evidence Graph",
+      "type": "object"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/DetectorFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "input": {
+      "$ref": "#/$defs/FileDescriptor"
+    },
+    "limitations": {
+      "items": {
+        "$ref": "#/$defs/Limitation"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "module_status": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModuleStatus"
+      },
+      "title": "Module Status",
+      "type": "object"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "scan_id": {
+      "title": "Scan Id",
+      "type": "string"
+    },
+    "scanner": {
+      "$ref": "#/$defs/ScannerInfo"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "timings_ms": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Timings Ms",
+      "type": "object"
+    }
+  },
+  "required": [
+    "scan_id",
+    "scanner",
+    "input",
+    "decision",
+    "assessments"
+  ],
+  "title": "ScanReport",
+  "type": "object"
+}

@@ -1,0 +1,1040 @@
+{
+  "schema_version": "1.0.0",
+  "scan_id": "scan-df4ddbe4bb8a",
+  "created_at": "2026-06-25T09:18:16.320742Z",
+  "scanner": {
+    "name": "argus-img",
+    "version": "0.1.0",
+    "offline_mode": true,
+    "mode": "fast",
+    "use_profile": "AGENT_WITH_TOOLS",
+    "configuration_hash": "sha256:658a70e1e3d27053e26489fc1d8f5c9bd336f45b0a1e3ef0b06e58ccb789d99c"
+  },
+  "input": {
+    "original_filename": "clean.png",
+    "size_bytes": 10294,
+    "sha256": "sha256:6fb1acd21e20cf7143b75f2760f5a179ba736ef3cebf266a62a1dffedf8ff0ba",
+    "declared_mime": null,
+    "detected_mime": "image/png",
+    "format": "PNG",
+    "width": 900,
+    "height": 260,
+    "frames": 1
+  },
+  "decision": {
+    "action": "ALLOW_RECONSTRUCTED_ONLY",
+    "safe_claim": false,
+    "reason_codes": [],
+    "triggered_policy_rules": [],
+    "winning_rule_id": null,
+    "winning_rule_priority": null,
+    "summary": "No policy rule matched; only reconstructed derivatives are releasable.",
+    "explanation": "The original upload remains quarantined."
+  },
+  "assessments": {
+    "file_security": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "malware": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "embedded_payload": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "prompt_injection": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "covert_channel": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "low",
+      "finding_ids": [],
+      "limitations": [
+        "Arbitrary encrypted steganography cannot be excluded."
+      ],
+      "summary": "No evidence found in implemented checks."
+    },
+    "steganography": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "low",
+      "finding_ids": [],
+      "limitations": [
+        "Arbitrary encrypted steganography cannot be excluded."
+      ],
+      "summary": "No evidence found in implemented checks."
+    },
+    "watermarks": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "low",
+      "finding_ids": [],
+      "limitations": [
+        "Unknown watermark schemes are unsupported."
+      ],
+      "summary": "No evidence found in implemented checks."
+    },
+    "provenance": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "phishing": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "privacy": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "redaction_failure": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    },
+    "adversarial_instability": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "not_tested",
+      "finding_ids": [],
+      "limitations": [
+        "Model-specific adversarial perturbations were not fully tested."
+      ],
+      "summary": "No evidence found in implemented checks."
+    },
+    "authenticity_indicators": {
+      "state": "NO_EVIDENCE_FOUND",
+      "likelihood": null,
+      "impact": "low",
+      "coverage": "medium",
+      "finding_ids": [],
+      "limitations": [],
+      "summary": "No evidence found in implemented checks."
+    }
+  },
+  "findings": [],
+  "artifacts": {
+    "original": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:original",
+      "sha256": "sha256:6fb1acd21e20cf7143b75f2760f5a179ba736ef3cebf266a62a1dffedf8ff0ba",
+      "media_type": "image/png",
+      "size_bytes": 10294,
+      "created_by": "intake",
+      "derived_from": null,
+      "transformation": null,
+      "storage_reference": "quarantine/6f/b1/6fb1acd21e20cf7143b75f2760f5a179ba736ef3cebf266a62a1dffedf8ff0ba",
+      "release_eligible": false,
+      "role": "original",
+      "width": null,
+      "height": null,
+      "frame_index": null
+    },
+    "canonical_lossless": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "canonical-reconstruction",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:original",
+      "transformation": {
+        "transformation_id": "transform:canonical-lossless",
+        "type": "canonical_lossless_png",
+        "parameters": {
+          "metadata_stripped": true,
+          "orientation_applied": true
+        },
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": true,
+      "role": "canonical_lossless",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "canonical_lossy": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:canonical-lossy",
+      "sha256": "sha256:7424c9e673f982549ffd29e96a35f35a0cb2f9c7bca65f150c401cfa747360f8",
+      "media_type": "image/jpeg",
+      "size_bytes": 14837,
+      "created_by": "canonical-reconstruction",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:original",
+      "transformation": {
+        "transformation_id": "transform:canonical-lossy",
+        "type": "canonical_lossy_jpeg",
+        "parameters": {
+          "metadata_stripped": true,
+          "quality": 90
+        },
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/74/24/7424c9e673f982549ffd29e96a35f35a0cb2f9c7bca65f150c401cfa747360f8",
+      "release_eligible": true,
+      "role": "canonical_lossy",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "flattened_white": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:flattened-white",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "canonical-reconstruction",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:original",
+      "transformation": {
+        "transformation_id": "transform:flattened-white",
+        "type": "alpha_flatten",
+        "parameters": {
+          "background": "white",
+          "metadata_stripped": true
+        },
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": true,
+      "role": "flattened_white",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "flattened_black": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:flattened-black",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "canonical-reconstruction",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:original",
+      "transformation": {
+        "transformation_id": "transform:flattened-black",
+        "type": "alpha_flatten",
+        "parameters": {
+          "background": "black",
+          "metadata_stripped": true
+        },
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": true,
+      "role": "flattened_black",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "grayscale": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:grayscale",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:grayscale",
+        "type": "grayscale",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": false,
+      "role": "grayscale",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "otsu-threshold": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:otsu-threshold",
+      "sha256": "sha256:133ede11ef287c5483e3225f52a0d40e49de73d821e8f3ecb41688f80e7b3f38",
+      "media_type": "image/png",
+      "size_bytes": 2876,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:otsu-threshold",
+        "type": "otsu_threshold",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/13/3e/133ede11ef287c5483e3225f52a0d40e49de73d821e8f3ecb41688f80e7b3f38",
+      "release_eligible": false,
+      "role": "otsu-threshold",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "inverted-grayscale": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:inverted-grayscale",
+      "sha256": "sha256:f92d79166f83a84564cb117e4272e36b6b46f0962560c9c9eb4faedafe140c19",
+      "media_type": "image/png",
+      "size_bytes": 9356,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:inverted-grayscale",
+        "type": "inverted_grayscale",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/f9/2d/f92d79166f83a84564cb117e4272e36b6b46f0962560c9c9eb4faedafe140c19",
+      "release_eligible": false,
+      "role": "inverted-grayscale",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "red-channel": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:red-channel",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:red-channel",
+        "type": "red_channel",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": false,
+      "role": "red-channel",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "green-channel": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:green-channel",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:green-channel",
+        "type": "green_channel",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": false,
+      "role": "green-channel",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "blue-channel": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:blue-channel",
+      "sha256": "sha256:dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "media_type": "image/png",
+      "size_bytes": 10295,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:blue-channel",
+        "type": "blue_channel",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/dc/9f/dc9f0a48c6ecbe5c57eaf9bc08562cdfab5dcefd2d3f3cee20c1aeb44ed02e76",
+      "release_eligible": false,
+      "role": "blue-channel",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "alpha-channel": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:alpha-channel",
+      "sha256": "sha256:f36f5ac97da31bba33cb638475f1c715f0513e5c2f838536636164d267dc397e",
+      "media_type": "image/png",
+      "size_bytes": 1319,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:alpha-channel",
+        "type": "alpha_channel",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/f3/6f/f36f5ac97da31bba33cb638475f1c715f0513e5c2f838536636164d267dc397e",
+      "release_eligible": false,
+      "role": "alpha-channel",
+      "width": 900,
+      "height": 260,
+      "frame_index": null
+    },
+    "2x-enlargement": {
+      "artifact_id": "artifact:scan-df4ddbe4bb8a:2x-enlargement",
+      "sha256": "sha256:31fa28425a5ae4a8906928fed4020f5fc8cfd43d9cba837a4006bf635b7811ef",
+      "media_type": "image/png",
+      "size_bytes": 36505,
+      "created_by": "transformation-bank",
+      "derived_from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "transformation": {
+        "transformation_id": "transform:2x-enlargement",
+        "type": "2x_enlargement",
+        "parameters": {},
+        "inverse_coordinate_mapping": null,
+        "reliability_class": "forensic",
+        "resource_cost_class": "low"
+      },
+      "storage_reference": "artifacts/sha256/31/fa/31fa28425a5ae4a8906928fed4020f5fc8cfd43d9cba837a4006bf635b7811ef",
+      "release_eligible": false,
+      "role": "2x-enlargement",
+      "width": 1800,
+      "height": 520,
+      "frame_index": null
+    }
+  },
+  "observations": [
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:000",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "canonical_lossless"
+      },
+      "confidence": null,
+      "transformation_id": "transform:canonical-lossless",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:001",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:flattened-white",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "flattened_white"
+      },
+      "confidence": null,
+      "transformation_id": "transform:flattened-white",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:002",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:flattened-black",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "flattened_black"
+      },
+      "confidence": null,
+      "transformation_id": "transform:flattened-black",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:003",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:grayscale",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "grayscale"
+      },
+      "confidence": null,
+      "transformation_id": "transform:grayscale",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:004",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:otsu-threshold",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "otsu-threshold"
+      },
+      "confidence": null,
+      "transformation_id": "transform:otsu-threshold",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:005",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:inverted-grayscale",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "inverted-grayscale"
+      },
+      "confidence": null,
+      "transformation_id": "transform:inverted-grayscale",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:006",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:red-channel",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "red-channel"
+      },
+      "confidence": null,
+      "transformation_id": "transform:red-channel",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:007",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:green-channel",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "green-channel"
+      },
+      "confidence": null,
+      "transformation_id": "transform:green-channel",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:008",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:blue-channel",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "blue-channel"
+      },
+      "confidence": null,
+      "transformation_id": "transform:blue-channel",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    },
+    {
+      "observation_id": "observation:scan-df4ddbe4bb8a:ocr:009",
+      "type": "text",
+      "source_artifact_id": "artifact:scan-df4ddbe4bb8a:2x-enlargement",
+      "detector_id": "detector:tesseract",
+      "value": {
+        "artifact_label": "2x-enlargement"
+      },
+      "confidence": null,
+      "transformation_id": "transform:2x-enlargement",
+      "raw_text": "Quarterly dashboard\nNo hidden instructions.",
+      "normalized_text": "Quarterly dashboard No hidden instructions.",
+      "engine": "tesseract",
+      "engine_version": "tesseract 5.5.2",
+      "language": null,
+      "bounding_polygon": null,
+      "original_image_polygon": null,
+      "character_alternatives": null,
+      "context": "ambiguous"
+    }
+  ],
+  "coverage": {
+    "original_container": "high",
+    "all_frames": "complete",
+    "visible_text": "medium",
+    "low_contrast_text": "medium",
+    "metadata_text": "medium",
+    "known_embedded_formats": "low",
+    "common_steganography": "low",
+    "unknown_steganography": "low",
+    "registered_watermark_schemes": "low",
+    "unknown_watermarks": "unsupported",
+    "model_specific_adversarial_attacks": "not_tested",
+    "universal_attack_absence": "impossible",
+    "universal_absence_claim": false
+  },
+  "module_status": {
+    "artifact_store": {
+      "name": "artifact_store",
+      "status": "CONFIRMED",
+      "reason": "/Users/lohith-uncovai/Documents/Alldevelopment/argus/data",
+      "version": null
+    },
+    "opencv_decoder": {
+      "name": "opencv_decoder",
+      "status": "CONFIRMED",
+      "reason": null,
+      "version": null
+    },
+    "metadata_builtin": {
+      "name": "metadata_builtin",
+      "status": "NO_EVIDENCE_FOUND",
+      "reason": null,
+      "version": null
+    },
+    "exiftool": {
+      "name": "exiftool",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "binwalk": {
+      "name": "binwalk",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "clamav": {
+      "name": "clamav",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "yara": {
+      "name": "yara",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "c2pa": {
+      "name": "c2pa",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "paddleocr": {
+      "name": "paddleocr",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "zsteg": {
+      "name": "zsteg",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "watermark_registry": {
+      "name": "registered_watermark_detectors",
+      "status": "UNSUPPORTED",
+      "reason": "no invisible watermark plugins configured",
+      "version": null
+    },
+    "redaction_analysis": {
+      "name": "redaction_analysis",
+      "status": "NOT_TESTED",
+      "reason": "baseline does not recover blurred or pixelated redactions",
+      "version": null
+    },
+    "adversarial_stability": {
+      "name": "adversarial_stability",
+      "status": "NOT_TESTED",
+      "reason": "model-specific adversarial stability testing is not implemented in baseline",
+      "version": null
+    },
+    "visual_analyzer": {
+      "name": "visual_analyzer",
+      "status": "NOT_TESTED",
+      "reason": "NullVisualAnalyzer configured",
+      "version": null
+    },
+    "tesseract": {
+      "name": "tesseract",
+      "status": "CONFIRMED",
+      "reason": null,
+      "version": "tesseract 5.5.2"
+    },
+    "qr": {
+      "name": "qr",
+      "status": "UNSUPPORTED",
+      "reason": "tool_not_installed",
+      "version": null
+    },
+    "steganalysis_statistics": {
+      "name": "steganalysis_statistics",
+      "status": "CONFIRMED",
+      "reason": "{'grayscale_entropy': 0.2904701971341856}",
+      "version": null
+    }
+  },
+  "limitations": [
+    {
+      "limitation_id": "limitation:universal-safety",
+      "category": "global",
+      "description": "No report can prove an image is universally safe."
+    },
+    {
+      "limitation_id": "limitation:unknown-steganography",
+      "category": "steganography",
+      "description": "Arbitrary encrypted steganography cannot be excluded."
+    },
+    {
+      "limitation_id": "limitation:unknown-watermarks",
+      "category": "watermarks",
+      "description": "Unknown watermark schemes are not exhaustively detectable."
+    }
+  ],
+  "errors": [],
+  "timings_ms": {
+    "total_ms": 1047.065084
+  },
+  "evidence_graph": {
+    "nodes": [
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:original",
+        "type": "Artifact",
+        "role": "original"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "type": "Artifact",
+        "role": "canonical_lossless"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:canonical-lossy",
+        "type": "Artifact",
+        "role": "canonical_lossy"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:flattened-white",
+        "type": "Artifact",
+        "role": "flattened_white"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:flattened-black",
+        "type": "Artifact",
+        "role": "flattened_black"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:grayscale",
+        "type": "Artifact",
+        "role": "grayscale"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:otsu-threshold",
+        "type": "Artifact",
+        "role": "otsu-threshold"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:inverted-grayscale",
+        "type": "Artifact",
+        "role": "inverted-grayscale"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:red-channel",
+        "type": "Artifact",
+        "role": "red-channel"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:green-channel",
+        "type": "Artifact",
+        "role": "green-channel"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:blue-channel",
+        "type": "Artifact",
+        "role": "blue-channel"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:alpha-channel",
+        "type": "Artifact",
+        "role": "alpha-channel"
+      },
+      {
+        "id": "artifact:scan-df4ddbe4bb8a:2x-enlargement",
+        "type": "Artifact",
+        "role": "2x-enlargement"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:000",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:001",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:002",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:003",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:004",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:005",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:006",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:007",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:008",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      },
+      {
+        "id": "observation:scan-df4ddbe4bb8a:ocr:009",
+        "type": "Observation",
+        "detector": "detector:tesseract"
+      }
+    ],
+    "edges": [
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:original",
+        "to": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "type": "derived_from",
+        "transformation": "transform:canonical-lossless"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:original",
+        "to": "artifact:scan-df4ddbe4bb8a:canonical-lossy",
+        "type": "derived_from",
+        "transformation": "transform:canonical-lossy"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:original",
+        "to": "artifact:scan-df4ddbe4bb8a:flattened-white",
+        "type": "derived_from",
+        "transformation": "transform:flattened-white"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:original",
+        "to": "artifact:scan-df4ddbe4bb8a:flattened-black",
+        "type": "derived_from",
+        "transformation": "transform:flattened-black"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:grayscale",
+        "type": "derived_from",
+        "transformation": "transform:grayscale"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:otsu-threshold",
+        "type": "derived_from",
+        "transformation": "transform:otsu-threshold"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:inverted-grayscale",
+        "type": "derived_from",
+        "transformation": "transform:inverted-grayscale"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:red-channel",
+        "type": "derived_from",
+        "transformation": "transform:red-channel"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:green-channel",
+        "type": "derived_from",
+        "transformation": "transform:green-channel"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:blue-channel",
+        "type": "derived_from",
+        "transformation": "transform:blue-channel"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:alpha-channel",
+        "type": "derived_from",
+        "transformation": "transform:alpha-channel"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "artifact:scan-df4ddbe4bb8a:2x-enlargement",
+        "type": "derived_from",
+        "transformation": "transform:2x-enlargement"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:canonical-lossless",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:000",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:flattened-white",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:001",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:flattened-black",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:002",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:grayscale",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:003",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:otsu-threshold",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:004",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:inverted-grayscale",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:005",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:red-channel",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:006",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:green-channel",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:007",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:blue-channel",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:008",
+        "type": "observed_in"
+      },
+      {
+        "from": "artifact:scan-df4ddbe4bb8a:2x-enlargement",
+        "to": "observation:scan-df4ddbe4bb8a:ocr:009",
+        "type": "observed_in"
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+profile: HUMAN_VIEW
+rules:
+  - id: human-quarantine-malware
+    priority: 1000
+    when: {category: malware, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: QUARANTINE
+  - id: human-review-prompt
+    priority: 700
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    action: REVIEW
+  - id: human-redact-privacy
+    priority: 500
+    when: {category: privacy, state: CONFIRMED}
+    action: ALLOW_WITH_REDACTION
+

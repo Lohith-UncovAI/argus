@@ -1,0 +1,11 @@
+profile: VLM_READ_ONLY
+rules:
+  - id: vlm-block-active-prompt
+    priority: 900
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: BLOCK
+  - id: vlm-review-possible-prompt
+    priority: 700
+    when: {category: prompt_injection, state: POSSIBLE}
+    action: REVIEW
+

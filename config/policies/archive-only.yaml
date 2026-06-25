@@ -1,0 +1,11 @@
+profile: ARCHIVE_ONLY
+rules:
+  - id: archive-quarantine-malware
+    priority: 1000
+    when: {category: malware, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: QUARANTINE
+  - id: archive-review-active-prompt
+    priority: 700
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: REVIEW
+

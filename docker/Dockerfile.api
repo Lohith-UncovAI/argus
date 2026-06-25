@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+RUN useradd -r -u 10001 argus
+WORKDIR /app
+COPY pyproject.toml README.md /app/
+COPY src /app/src
+COPY config /app/config
+RUN pip install --no-cache-dir .
+USER argus
+ENV PYTHONUNBUFFERED=1
+CMD ["uvicorn", "argus_img.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+

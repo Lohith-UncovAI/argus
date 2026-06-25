@@ -1,0 +1,29 @@
+rules:
+  - id: PI-INSTRUCTION-OVERRIDE-EN-001
+    category: instruction_override
+    severity: critical
+    languages: [en]
+    patterns:
+      - '\bignore\s+(all\s+)?(previous|prior|above)\s+instructions?\b'
+      - '\boverride\s+(the\s+)?(system|developer)\s+(prompt|message)\b'
+  - id: PI-SYSTEM-PROMPT-REQUEST-EN-001
+    category: system_prompt_request
+    severity: high
+    languages: [en]
+    patterns:
+      - '\bshow\s+(me\s+)?(your\s+)?system\s+prompt\b'
+      - '\breveal\s+(the\s+)?(hidden\s+)?(developer|system)\s+(message|instructions?)\b'
+  - id: PI-TOOL-REQUEST-EN-001
+    category: tool_invocation
+    severity: critical
+    languages: [en]
+    patterns:
+      - '\b(call|use|invoke)\s+(the\s+)?tool\b'
+      - '\b(run|execute)\s+(this\s+)?(command|shell|python)\b'
+  - id: PI-SECRET-REQUEST-EN-001
+    category: credential_request
+    severity: high
+    languages: [en]
+    patterns:
+      - '\b(send|reveal|print|upload)\s+(the\s+)?(api\s*key|token|password|secret|seed phrase)\b'
+
