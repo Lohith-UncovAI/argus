@@ -18,8 +18,6 @@ class ScanRequest(BaseModel):
     declared_mime: Optional[str] = None
     mode: ScanMode = ScanMode.FAST
     use_profile: UseProfile = UseProfile.AGENT_WITH_TOOLS
-    sanitize: bool = True
-    redact: bool = False
     include_raw_text: bool = False
 
 
@@ -28,8 +26,6 @@ class ScanContext(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
     mode: ScanMode = ScanMode.FAST
     use_profile: UseProfile = UseProfile.AGENT_WITH_TOOLS
-    sanitize: bool = True
-    redact: bool = False
     include_raw_text: bool = False
     job_dir: str
     data_dir: str

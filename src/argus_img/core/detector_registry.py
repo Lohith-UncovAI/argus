@@ -18,6 +18,10 @@ class DetectorRegistryEntry(BaseModel):
     category: str = Field(min_length=1)
     required: bool = False
     required_profiles: List[UseProfile] = Field(default_factory=list)
+    # When True the detector is mandatory but may legitimately return UNSUPPORTED
+    # (e.g., a stub awaiting full implementation).  Missing from execution list
+    # is still a hard failure.
+    allow_unsupported: bool = False
 
     @field_validator("category")
     @classmethod

@@ -147,27 +147,48 @@ class ArtifactStore:
         self._chmod(dest, SECURE_FILE_MODE)
 
     def _copy_and_hash_bounded(self, source: Path, max_bytes: Optional[int], quarantine: bool) -> tuple[str, int, Path]:
-        if source.is_symlink():
-            raise IntakeRejected("symlink inputs are not accepted")
+        # Descriptor-level no-follow: open with O_NOFOLLOW on POSIX so that a
+        # symlink swap between lstat and open cannot substitute a different file.
+        import hashlib
+        import stat as _stat
+
         root = self.quarantine_dir if quarantine else self.temporary_dir
         root.mkdir(parents=True, exist_ok=True)
         self._chmod(root, SECURE_DIR_MODE)
-        import hashlib
 
         digest = hashlib.sha256()
         copied = 0
         tmp_path: Optional[Path] = None
         try:
-            with source.open("rb") as src, tempfile.NamedTemporaryFile(dir=str(root), delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-                for chunk in iter(lambda: src.read(1024 * 1024), b""):
-                    copied += len(chunk)
-                    if max_bytes is not None and copied > max_bytes:
-                        raise IntakeRejected("input exceeds maximum byte limit")
-                    digest.update(chunk)
-                    tmp.write(chunk)
-                tmp.flush()
-                os.fsync(tmp.fileno())
+            open_flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                open_flags |= os.O_NOFOLLOW
+            try:
+                fd = os.open(str(source), open_flags)
+            except OSError as exc:
+                raise IntakeRejected("cannot open input file: %s" % exc) from exc
+            try:
+                st = os.fstat(fd)
+                if not _stat.S_ISREG(st.st_mode):
+                    raise IntakeRejected("input must be a regular file, not a special or device file")
+                src_io = os.fdopen(fd, "rb")
+                fd = -1  # ownership transferred to src_io
+                with src_io, tempfile.NamedTemporaryFile(dir=str(root), delete=False) as tmp:
+                    tmp_path = Path(tmp.name)
+                    for chunk in iter(lambda: src_io.read(1024 * 1024), b""):
+                        copied += len(chunk)
+                        if max_bytes is not None and copied > max_bytes:
+                            raise IntakeRejected("input exceeds maximum byte limit")
+                        digest.update(chunk)
+                        tmp.write(chunk)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+            finally:
+                if fd != -1:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
             if copied == 0:
                 raise IntakeRejected("empty inputs are not accepted")
             self._chmod(tmp_path, SECURE_FILE_MODE)

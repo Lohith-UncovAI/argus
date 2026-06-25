@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 import json
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Union
 
 import yaml
-from importlib.abc import Traversable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .exceptions import ConfigurationError

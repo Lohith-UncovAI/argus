@@ -13,11 +13,8 @@ def create_scan_context(store: ArtifactStore, request: ScanRequest, config: AppC
         scan_id=scan_id,
         mode=request.mode,
         use_profile=request.use_profile,
-        sanitize=request.sanitize,
-        redact=request.redact,
         include_raw_text=request.include_raw_text,
         job_dir=str(job_dir),
         data_dir=str(Path(config.data_dir)),
         config_hash=config_hash(config),
     )
-

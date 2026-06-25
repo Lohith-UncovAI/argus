@@ -28,6 +28,8 @@ def validate_image_file(
 ) -> FileDescriptor:
     if path.is_symlink():
         raise IntakeRejected("symlink inputs are not accepted")
+    if not path.is_file():
+        raise IntakeRejected("input must be a regular file")
     size = known_size if known_size is not None else path.stat().st_size
     if size > limits.max_input_bytes:
         raise IntakeRejected("input exceeds maximum byte limit")

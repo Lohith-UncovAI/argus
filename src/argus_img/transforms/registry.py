@@ -87,3 +87,44 @@ def generate_fast_transformations(
     enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
     store_transformed("2x-enlargement", enlarged)
     return artifacts
+
+
+def generate_grayscale_only(
+    store: ArtifactStore,
+    source_artifact: Artifact,
+    source_path: Path,
+    scan_id: str,
+    budget: Optional[ResourceBudget] = None,
+) -> Dict[str, Artifact]:
+    """Minimal transform set for fast mode: only grayscale."""
+    with Image.open(source_path) as raw:
+        image = raw.convert("RGBA")
+    gray = ImageOps.grayscale(image)
+    artifacts: Dict[str, Artifact] = {}
+
+    data = encode_png(gray.convert("RGB"))
+    if budget:
+        budget.consume_transformed_pixels(gray.width * gray.height)
+        budget.consume_artifact(len(data))
+    transformation = ArtifactTransformation(
+        transformation_id="transform:grayscale",
+        type="grayscale",
+        parameters={},
+        inverse_coordinate_mapping="identity",
+        reliability_class="forensic",
+        resource_cost_class="low",
+    )
+    artifacts["grayscale"] = store.store_bytes(
+        data,
+        artifact_id="artifact:%s:grayscale" % scan_id,
+        media_type="image/png",
+        created_by="transformation-bank",
+        role="grayscale",
+        release_eligible=False,
+        derived_from=source_artifact.artifact_id,
+        transformation=transformation,
+        width=gray.width,
+        height=gray.height,
+        representation_id="repr:grayscale",
+    )
+    return artifacts

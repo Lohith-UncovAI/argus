@@ -3,20 +3,50 @@ detectors:
     family: metadata
     category: privacy
     required: true
+
   - id: detector:exiftool
     family: metadata
     category: privacy
     required: false
+
   - id: detector:tesseract
     family: OCR
     category: prompt_injection
     required: false
     required_profiles: [AGENT_WITH_TOOLS, OCR_EXTRACTION, PUBLIC_REPUBLISHING]
+
   - id: detector:qr-pyzbar
     family: QR/barcode
     category: embedded_payload
     required: false
+    required_profiles: [AGENT_WITH_TOOLS]
+
   - id: detector:prompt-rules
     family: prompt
     category: prompt_injection
     required: true
+
+  # Malware scanning: mandatory presence for AGENT_WITH_TOOLS but may return
+  # UNSUPPORTED until real tool implementations are complete.
+  - id: detector:malware-clamav
+    family: malware
+    category: malware
+    required: false
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    allow_unsupported: true
+
+  - id: detector:malware-yara
+    family: malware
+    category: malware
+    required: false
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    allow_unsupported: true
+
+  # Embedded-payload analysis: mandatory presence for AGENT_WITH_TOOLS but may
+  # return UNSUPPORTED until full tool implementations are available.
+  - id: detector:embedded-binwalk
+    family: embedded_payload
+    category: embedded_payload
+    required: false
+    required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
+    allow_unsupported: true

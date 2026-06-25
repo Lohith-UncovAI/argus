@@ -18,8 +18,6 @@ def create_scan(
     file: UploadFile = File(...),
     mode: ScanMode = Form(ScanMode.FAST),
     use_profile: UseProfile = Form(UseProfile.AGENT_WITH_TOOLS),
-    sanitize: bool = Form(True),
-    redact: bool = Form(False),
 ):
     config = load_config()
     temporary_dir = Path(config.data_dir) / "temporary"
@@ -34,8 +32,6 @@ def create_scan(
             declared_mime=file.content_type,
             mode=mode,
             use_profile=use_profile,
-            sanitize=sanitize,
-            redact=redact,
             include_raw_text=False,
         )
         report = scan_file(temp_path, request, config)

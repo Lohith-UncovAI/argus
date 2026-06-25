@@ -61,6 +61,7 @@ from argus_img.evidence.graph import build_evidence_graph
 from argus_img.intake.mime import detect_magic
 from argus_img.intake.validation import validate_image_file
 from argus_img.orchestration.context import create_scan_context
+from argus_img.orchestration.mode_plan import plan_for_mode
 from argus_img.orchestration.representations import build_representation_manifest
 from argus_img.policy.engine import PolicyEngine
 from argus_img.policy.coverage import mandatory_coverage_decision
@@ -255,6 +256,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
     path = Path(path)
     request = request or ScanRequest(original_filename=path.name)
     config = config or load_config()
+    mode_plan = plan_for_mode(request.mode)
     registry = load_detector_registry()
     budget = ResourceBudget(config.limits)
     store = ArtifactStore(Path(config.data_dir))
@@ -397,6 +399,27 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             errors.append(ErrorRecord(source="exiftool", message=error))
         module_status.update(embedded_tool_statuses())
         module_status.update(malware_tool_statuses())
+
+        # Emit explicit stub executions for mandatory-but-unimplemented detectors
+        # so the fail-closed coverage check in mandatory_coverage_decision sees
+        # them as accounted for (missing == hard failure; UNSUPPORTED == permitted).
+        for stub_id, tool_key, family, category in [
+            ("detector:malware-clamav", "clamav", "malware", "malware"),
+            ("detector:malware-yara", "yara", "malware", "malware"),
+            ("detector:embedded-binwalk", "binwalk", "embedded_payload", "embedded_payload"),
+        ]:
+            tool_status = module_status.get(tool_key)
+            installed = tool_status is not None and tool_status.status != EpistemicState.UNSUPPORTED
+            detector_executions.append(
+                _execution(
+                    stub_id,
+                    DetectorStatus.NO_EVIDENCE if installed else DetectorStatus.UNSUPPORTED,
+                    EpistemicState.NOT_TESTED if installed else EpistemicState.UNSUPPORTED,
+                    family=family,
+                    category=category,
+                    reason=None if installed else "tool_not_installed",
+                )
+            )
         module_status["c2pa"] = provenance_status()
         module_status["paddleocr"] = paddle_status()
         module_status["zsteg"] = zsteg_status()
