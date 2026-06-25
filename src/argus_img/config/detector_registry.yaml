@@ -26,27 +26,24 @@ detectors:
     category: prompt_injection
     required: true
 
-  # Malware scanning: mandatory presence for AGENT_WITH_TOOLS but may return
-  # UNSUPPORTED until real tool implementations are complete.
+  # Malware scanning: mandatory for AGENT_WITH_TOOLS and SECURITY_FORENSICS.
+  # Must complete a real scan execution — UNSUPPORTED is not accepted for mandatory coverage.
   - id: detector:malware-clamav
     family: malware
     category: malware
     required: false
     required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
-    allow_unsupported: true
 
   - id: detector:malware-yara
     family: malware
     category: malware
     required: false
     required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
-    allow_unsupported: true
 
-  # Embedded-payload analysis: mandatory presence for AGENT_WITH_TOOLS but may
-  # return UNSUPPORTED until full tool implementations are available.
+  # Embedded-payload analysis: mandatory for AGENT_WITH_TOOLS and SECURITY_FORENSICS.
+  # Must complete a real scan execution — UNSUPPORTED is not accepted for mandatory coverage.
   - id: detector:embedded-binwalk
     family: embedded_payload
     category: embedded_payload
     required: false
     required_profiles: [AGENT_WITH_TOOLS, SECURITY_FORENSICS]
-    allow_unsupported: true

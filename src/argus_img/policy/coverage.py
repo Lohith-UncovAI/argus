@@ -14,25 +14,29 @@ STRICT_PROFILES = {
     UseProfile.SECURITY_FORENSICS,
 }
 
-MANDATORY_OK_STATUSES = {DetectorStatus.SUCCESS, DetectorStatus.NO_EVIDENCE}
+# Only a completed real execution satisfies mandatory coverage.
+MANDATORY_OK_STATUSES = {DetectorStatus.SUCCESS, DetectorStatus.NO_EVIDENCE, DetectorStatus.DETECTED}
 MANDATORY_OK_STATES = {EpistemicState.CONFIRMED, EpistemicState.NO_EVIDENCE_FOUND}
 
-# Detectors that must be executed but are permitted to return UNSUPPORTED
-# (i.e., the tool is not yet fully implemented).  They still must appear in
-# the execution list; "missing" is still a hard failure.
-PERMITTED_UNSUPPORTED_STATUSES = {DetectorStatus.UNSUPPORTED, DetectorStatus.TOOL_NOT_INSTALLED}
-PERMITTED_UNSUPPORTED_STATES = {EpistemicState.UNSUPPORTED, EpistemicState.NOT_TESTED}
+# All other statuses indicate incomplete coverage and must block release.
+INCOMPLETE_STATUSES = {
+    DetectorStatus.UNSUPPORTED,
+    DetectorStatus.TOOL_NOT_INSTALLED,
+    DetectorStatus.NOT_TESTED,
+    DetectorStatus.ERROR,
+    DetectorStatus.TIMEOUT,
+    DetectorStatus.RESOURCE_LIMIT,
+    DetectorStatus.MISSING,
+    DetectorStatus.CANCELLED,
+}
 
 
-def _execution_ok(execution: DetectorExecution, allow_unsupported: bool) -> bool:
-    if execution.status in MANDATORY_OK_STATUSES and execution.state in MANDATORY_OK_STATES:
-        return True
-    if allow_unsupported:
-        return (
-            execution.status in PERMITTED_UNSUPPORTED_STATUSES
-            and execution.state in PERMITTED_UNSUPPORTED_STATES
-        )
-    return False
+def _execution_ok(execution: DetectorExecution) -> bool:
+    """Return True only if the execution represents a real completed scan."""
+    return (
+        execution.status in MANDATORY_OK_STATUSES
+        and execution.state in MANDATORY_OK_STATES
+    )
 
 
 def mandatory_coverage_decision(
@@ -50,11 +54,15 @@ def mandatory_coverage_decision(
         if execution is None:
             failures.append("%s:missing" % entry.id)
             continue
-        allow_unsupported = getattr(entry, "allow_unsupported", False)
-        if not _execution_ok(execution, allow_unsupported):
-            failures.append("%s:%s/%s" % (entry.id, execution.status.value, execution.state.value))
+        if not _execution_ok(execution):
+            failures.append(
+                "%s:%s/%s" % (entry.id, execution.status.value, execution.state.value)
+            )
     if representation_manifest is not None and not representation_manifest.coverage_complete:
-        failures.extend("representation:%s:missing" % item for item in representation_manifest.missing_required)
+        failures.extend(
+            "representation:%s:missing" % item
+            for item in representation_manifest.missing_required
+        )
     if not failures:
         return None
     return PolicyDecision(

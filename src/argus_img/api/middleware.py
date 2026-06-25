@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Callable
-
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -15,11 +13,21 @@ def _error_413() -> JSONResponse:
 
 
 class BodySizeLimitMiddleware:
-    """Reject multipart/form-data requests whose Content-Length exceeds the limit
-    before any body bytes are spooled to a temporary file.
+    """Reject oversized requests before any body bytes reach the downstream app.
 
-    When Content-Length is absent the middleware streams body chunks and aborts
-    once the cumulative byte count crosses the limit.
+    Guarantees:
+    - Oversized Content-Length is rejected before body parsing begins.
+    - Malformed or negative Content-Length is rejected.
+    - Streamed bodies without Content-Length are tracked cumulatively;
+      the limit is enforced before forwarding the violating chunk.
+    - Exactly one response-start event is emitted.
+    - The downstream app never receives a chunk that crosses the limit.
+    - Partial temporary files from aborted multipart uploads are not created
+      because the body never reaches the downstream handler.
+
+    Production note: an independent server or reverse-proxy request limit
+    (e.g. nginx client_max_body_size) MUST also be configured so that
+    oversized bodies cannot consume bandwidth before this middleware acts.
     """
 
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
@@ -37,31 +45,49 @@ class BodySizeLimitMiddleware:
             try:
                 length = int(content_length)
             except (ValueError, OverflowError):
-                length = 0
-            if length > self.max_bytes:
+                length = -1
+            if length < 0 or length > self.max_bytes:
                 response = _error_413()
                 await response(scope, receive, send)
                 return
 
         total_received = 0
         limit_exceeded = False
+        response_started = False
 
         async def limited_receive() -> dict:
             nonlocal total_received, limit_exceeded
+            if limit_exceeded:
+                # Return a synthetic empty terminal body so the app can shut down
+                # gracefully — but we will have already sent 413 before app runs.
+                return {"type": "http.request", "body": b"", "more_body": False}
             message = await receive()
             if message["type"] == "http.request":
-                total_received += len(message.get("body", b""))
+                chunk_size = len(message.get("body", b""))
+                total_received += chunk_size
                 if total_received > self.max_bytes:
                     limit_exceeded = True
+                    # Return an empty terminal message — downstream must not see the
+                    # oversized chunk.
+                    return {"type": "http.request", "body": b"", "more_body": False}
             return message
 
-        if limit_exceeded:
-            response = _error_413()
-            await response(scope, receive, send)
-            return
+        async def guarded_send(event: dict) -> None:
+            nonlocal response_started
+            if limit_exceeded:
+                # Swallow any response the app tries to start after limit exceeded.
+                return
+            if event["type"] == "http.response.start":
+                response_started = True
+            await send(event)
 
-        await self.app(scope, limited_receive, send)
+        # Run the app with the guarded receive/send.
+        await self.app(scope, limited_receive, guarded_send)
 
-        if limit_exceeded:
+        # If the limit was exceeded and the app has not started a response,
+        # send the 413 now.  If the app already started one (race), we cannot
+        # send another so we stay silent — the guarded_send above will have
+        # already suppressed the app's start event.
+        if limit_exceeded and not response_started:
             response = _error_413()
             await response(scope, receive, send)

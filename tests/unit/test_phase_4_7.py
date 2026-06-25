@@ -121,8 +121,8 @@ def test_agent_with_tools_fails_closed_without_malware_execution():
     assert "missing" in decision.explanation.lower() or "malware" in decision.explanation.lower()
 
 
-def test_agent_with_tools_passes_with_unsupported_malware_stub():
-    """Malware stubs returning UNSUPPORTED must not fail the coverage gate."""
+def test_unsupported_malware_fails_coverage_for_agent_with_tools():
+    """UNSUPPORTED malware stubs MUST fail the coverage gate — no fail-open."""
     registry = load_detector_registry()
     executions = [
         DetectorExecution(
@@ -167,16 +167,19 @@ def test_agent_with_tools_passes_with_unsupported_malware_stub():
         ),
     ]
     decision = mandatory_coverage_decision(UseProfile.AGENT_WITH_TOOLS, registry, executions)
-    # Should return None (no failure) because malware stubs allow_unsupported=True
-    assert decision is None
+    # UNSUPPORTED is no longer permitted for mandatory coverage — must fail closed.
+    assert decision is not None
+    assert decision.action == PolicyAction.UNSUPPORTED
+    assert "UNSUPPORTED" in decision.explanation
 
 
-def test_allow_unsupported_flag_present_in_registry():
+def test_allow_unsupported_field_removed_from_registry():
+    """DetectorRegistryEntry must not have allow_unsupported (removed in Phase 4.7B)."""
     registry = load_detector_registry()
-    allow_unsupported_ids = {e.id for e in registry.detectors if e.allow_unsupported}
-    assert "detector:malware-clamav" in allow_unsupported_ids
-    assert "detector:malware-yara" in allow_unsupported_ids
-    assert "detector:embedded-binwalk" in allow_unsupported_ids
+    for entry in registry.detectors:
+        assert not hasattr(entry, "allow_unsupported"), (
+            "allow_unsupported must be removed from registry entry %s" % entry.id
+        )
 
 
 def test_pipeline_emits_malware_stub_executions(fixture_path, app_config):
@@ -357,8 +360,10 @@ def test_budget_remaining_seconds_never_negative():
 # Schema drift guard (extended)
 # ---------------------------------------------------------------------------
 
-def test_detector_registry_schema_validates_allow_unsupported():
-    """DetectorRegistryEntry must accept allow_unsupported field."""
+def test_detector_registry_schema_rejects_allow_unsupported():
+    """DetectorRegistryEntry must REJECT allow_unsupported — field removed in Phase 4.7B."""
+    import pytest
+    from pydantic import ValidationError
     from argus_img.core.detector_registry import DetectorRegistry
 
     data = {
@@ -372,5 +377,5 @@ def test_detector_registry_schema_validates_allow_unsupported():
             }
         ]
     }
-    registry = DetectorRegistry.model_validate(data)
-    assert registry.detectors[0].allow_unsupported is True
+    with pytest.raises(ValidationError, match="allow_unsupported"):
+        DetectorRegistry.model_validate(data)

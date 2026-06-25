@@ -37,9 +37,9 @@ from argus_img.core.offline_guard import OfflineGuard
 from argus_img.decoding.differential import compare_decoders
 from argus_img.decoding.frames import extract_frames
 from argus_img.decoding.thumbnails import extract_embedded_thumbnails, thumbnail_status
-from argus_img.detectors.embedded_content import embedded_tool_statuses
+from argus_img.detectors.embedded_content import embedded_tool_statuses, run_binwalk
 from argus_img.detectors.machine_codes.qr import analyze_qr
-from argus_img.detectors.malware import malware_tool_statuses
+from argus_img.detectors.malware import malware_tool_statuses, run_clamav, run_yara
 from argus_img.detectors.metadata import analyze_builtin_metadata, analyze_with_exiftool, exiftool_status
 from argus_img.detectors.ocr.merge import merge_text_observations
 from argus_img.detectors.ocr.paddle import paddle_status
@@ -355,12 +355,16 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         artifacts.update(canonical)
         canonical_path = store.resolve_path(canonical["canonical_lossless"])
         release_candidate_path = store.resolve_path(canonical["canonical_lossy"])
-        if file_descriptor.frames > 1:
+        if mode_plan.extract_frames and file_descriptor.frames > 1:
             artifacts.update(extract_frames(store, original, snapshot_path, scan_id, config.limits.max_frames, budget))
-        thumbnail_artifacts = extract_embedded_thumbnails(store, original, snapshot_path, scan_id, budget)
-        artifacts.update(thumbnail_artifacts)
-        transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id, budget)
-        artifacts.update(transforms)
+        thumbnail_artifacts: Dict[str, Artifact] = {}
+        if mode_plan.extract_thumbnails:
+            thumbnail_artifacts = extract_embedded_thumbnails(store, original, snapshot_path, scan_id, budget)
+            artifacts.update(thumbnail_artifacts)
+        transforms: Dict[str, Artifact] = {}
+        if mode_plan.generate_transform_bank:
+            transforms = generate_fast_transformations(store, canonical["canonical_lossless"], canonical_path, scan_id, budget)
+            artifacts.update(transforms)
 
         candidate_trailing = detect_trailing_bytes(
             release_candidate_path,
@@ -400,33 +404,85 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         module_status.update(embedded_tool_statuses())
         module_status.update(malware_tool_statuses())
 
-        # Emit explicit stub executions for mandatory-but-unimplemented detectors
-        # so the fail-closed coverage check in mandatory_coverage_decision sees
-        # them as accounted for (missing == hard failure; UNSUPPORTED == permitted).
-        for stub_id, tool_key, family, category in [
-            ("detector:malware-clamav", "clamav", "malware", "malware"),
-            ("detector:malware-yara", "yara", "malware", "malware"),
-            ("detector:embedded-binwalk", "binwalk", "embedded_payload", "embedded_payload"),
-        ]:
-            tool_status = module_status.get(tool_key)
-            installed = tool_status is not None and tool_status.status != EpistemicState.UNSUPPORTED
-            detector_executions.append(
-                _execution(
-                    stub_id,
-                    DetectorStatus.NO_EVIDENCE if installed else DetectorStatus.UNSUPPORTED,
-                    EpistemicState.NOT_TESTED if installed else EpistemicState.UNSUPPORTED,
-                    family=family,
-                    category=category,
-                    reason=None if installed else "tool_not_installed",
-                )
-            )
-        module_status["c2pa"] = provenance_status()
-        module_status["paddleocr"] = paddle_status()
-        module_status["zsteg"] = zsteg_status()
+        # Run real malware and embedded-content adapters.
+        # Each adapter emits a DetectorExecution recording the actual outcome.
+        # When a tool is not installed it returns UNSUPPORTED — which is now an
+        # incomplete-coverage status and will block release for strict profiles.
+        detector_timeout = min(
+            config.limits.detector_timeout_seconds,
+            max(1, int(budget.remaining_seconds())),
+        )
+        clamav_report = run_clamav(
+            snapshot_path, original.artifact_id, scan_id, detector_timeout,
+            config.limits.max_subprocess_output_bytes,
+        )
+        _record_detector_report(clamav_report, detector_executions, findings, observations)
+        module_status["clamav"] = ModuleStatus(
+            name="clamav",
+            status=clamav_report.execution.state,
+            reason=clamav_report.execution.reason,
+            version=clamav_report.execution.tool_version,
+        )
+
+        detector_timeout = min(
+            config.limits.detector_timeout_seconds,
+            max(1, int(budget.remaining_seconds())),
+        )
+        yara_rule_path = getattr(getattr(config, "yara", None), "rule_bundle_path", None)
+        yara_report = run_yara(
+            snapshot_path, original.artifact_id, scan_id, detector_timeout,
+            rule_bundle_path=Path(yara_rule_path) if yara_rule_path else None,
+            max_output_bytes=config.limits.max_subprocess_output_bytes,
+        )
+        _record_detector_report(yara_report, detector_executions, findings, observations)
+        module_status["yara"] = ModuleStatus(
+            name="yara",
+            status=yara_report.execution.state,
+            reason=yara_report.execution.reason,
+            version=yara_report.execution.tool_version,
+        )
+
+        detector_timeout = min(
+            config.limits.detector_timeout_seconds,
+            max(1, int(budget.remaining_seconds())),
+        )
+        binwalk_report = run_binwalk(
+            snapshot_path, original.artifact_id, scan_id, detector_timeout,
+            config.limits.max_subprocess_output_bytes,
+        )
+        _record_detector_report(binwalk_report, detector_executions, findings, observations)
+        module_status["binwalk"] = ModuleStatus(
+            name="binwalk",
+            status=binwalk_report.execution.state,
+            reason=binwalk_report.execution.reason,
+            version=binwalk_report.execution.tool_version,
+        )
+        # Forensic-only detectors — skipped in fast and deep modes
+        if "detector:c2pa" in mode_plan.active_detectors:
+            module_status["c2pa"] = provenance_status()
+        else:
+            module_status["c2pa"] = ModuleStatus(name="c2pa", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
+        if "detector:paddleocr" in mode_plan.active_detectors:
+            module_status["paddleocr"] = paddle_status()
+        else:
+            module_status["paddleocr"] = ModuleStatus(name="paddleocr", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
+        if "detector:zsteg" in mode_plan.active_detectors:
+            module_status["zsteg"] = zsteg_status()
+        else:
+            module_status["zsteg"] = ModuleStatus(name="zsteg", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
         module_status["embedded_thumbnails"] = thumbnail_status(thumbnail_artifacts)
-        module_status["watermark_registry"] = watermark_registry_status()
-        module_status["redaction_analysis"] = redaction_analysis_status()
-        module_status["adversarial_stability"] = baseline_stability_status()
+        if "detector:watermark-registry" in mode_plan.active_detectors:
+            module_status["watermark_registry"] = watermark_registry_status()
+        else:
+            module_status["watermark_registry"] = ModuleStatus(name="watermark_registry", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
+        if "detector:redaction-analysis" in mode_plan.active_detectors:
+            module_status["redaction_analysis"] = redaction_analysis_status()
+        else:
+            module_status["redaction_analysis"] = ModuleStatus(name="redaction_analysis", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
+        if "detector:adversarial-stability" in mode_plan.active_detectors:
+            module_status["adversarial_stability"] = baseline_stability_status()
+        else:
+            module_status["adversarial_stability"] = ModuleStatus(name="adversarial_stability", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
         module_status["visual_analyzer"] = ModuleStatus(
             name="visual_analyzer",
             status=EpistemicState.NOT_TESTED,

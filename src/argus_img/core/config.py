@@ -22,6 +22,19 @@ class OfflineConfig(BaseModel):
     allow_dns_configured: bool = True
 
 
+class StorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    maximum_total_store_bytes: int = Field(default=10 * 1024 * 1024 * 1024, gt=0)  # 10 GiB
+    maximum_bytes_per_scan: int = Field(default=500 * 1024 * 1024, gt=0)  # 500 MiB
+    report_retention_seconds: float = Field(default=7 * 24 * 3600, gt=0)
+    quarantine_retention_seconds: float = Field(default=30 * 24 * 3600, gt=0)
+    forensic_evidence_retention_seconds: float = Field(default=90 * 24 * 3600, gt=0)
+    released_artifact_retention_seconds: float = Field(default=7 * 24 * 3600, gt=0)
+    job_directory_retention_seconds: float = Field(default=3600, gt=0)
+    orphan_grace_period_seconds: float = Field(default=300, ge=0)
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -29,6 +42,7 @@ class AppConfig(BaseModel):
     default_policy: str = "agent-with-tools"
     limits: Limits = Field(default_factory=Limits)
     offline: OfflineConfig = Field(default_factory=OfflineConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     optional_tools: Dict[str, str] = Field(default_factory=dict)
 
 

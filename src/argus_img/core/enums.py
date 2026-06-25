@@ -42,11 +42,15 @@ class ScanMode(str, Enum):
 class DetectorStatus(str, Enum):
     SUCCESS = "SUCCESS"
     NO_EVIDENCE = "NO_EVIDENCE"
+    DETECTED = "DETECTED"
     UNSUPPORTED = "UNSUPPORTED"
     TOOL_NOT_INSTALLED = "TOOL_NOT_INSTALLED"
     TIMEOUT = "TIMEOUT"
     ERROR = "ERROR"
     NOT_TESTED = "NOT_TESTED"
+    RESOURCE_LIMIT = "RESOURCE_LIMIT"
+    MISSING = "MISSING"
+    CANCELLED = "CANCELLED"
 
 
 class WatermarkState(str, Enum):

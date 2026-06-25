@@ -341,6 +341,9 @@ class ArtifactStore:
             transformation_id=artifact.transformation.transformation_id if artifact.transformation else None,
             reason=reason,
         )
+        now = time.time()
+        # Atomic transaction: grant insertion and release-flag update are committed
+        # together.  Neither is visible externally before the other.
         with self._connect() as connection:
             connection.execute(
                 """
@@ -348,11 +351,41 @@ class ArtifactStore:
                     (grant_id, scan_id, artifact_id, payload, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (grant.grant_id, scan_id, artifact.artifact_id, grant.model_dump_json(), time.time()),
+                (grant.grant_id, scan_id, artifact.artifact_id, grant.model_dump_json(), now),
             )
-        self._update_artifact_release_flag(artifact.artifact_id, True)
+            row = connection.execute(
+                "SELECT payload FROM artifacts WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+            if row is None:
+                raise ArtifactAccessDenied("unknown artifact during grant_release")
+            updated_artifact = Artifact.model_validate_json(row["payload"])
+            updated_artifact.release_eligible = True
+            connection.execute(
+                "UPDATE artifacts SET release_eligible = 1, payload = ? WHERE artifact_id = ?",
+                (updated_artifact.model_dump_json(), artifact.artifact_id),
+            )
         artifact.release_eligible = True
         return grant
+
+    def revoke_grant(self, scan_id: str, artifact_id: str) -> None:
+        """Revoke a release grant and mark the artifact non-releasable atomically."""
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM release_grants WHERE scan_id = ? AND artifact_id = ?",
+                (scan_id, artifact_id),
+            )
+            row = connection.execute(
+                "SELECT payload FROM artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if row is not None:
+                artifact = Artifact.model_validate_json(row["payload"])
+                artifact.release_eligible = False
+                connection.execute(
+                    "UPDATE artifacts SET release_eligible = 0, payload = ? WHERE artifact_id = ?",
+                    (artifact.model_dump_json(), artifact_id),
+                )
 
     def grants_for_scan(self, scan_id: str) -> List[ReleaseGrant]:
         with self._connect() as connection:

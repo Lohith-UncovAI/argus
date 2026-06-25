@@ -11,8 +11,12 @@ from argus_img.orchestration.pipeline import scan_file
 
 
 def test_blocked_prompt_image_cannot_download_any_derivative(fixture_path, app_config, monkeypatch):
-    report = scan_file(fixture_path / "visible_prompt.png", ScanRequest(original_filename="visible_prompt.png"), app_config)
-    assert report.decision.action == PolicyAction.BLOCK
+    from argus_img.core.enums import UseProfile
+    request = ScanRequest(original_filename="visible_prompt.png", use_profile=UseProfile.HUMAN_VIEW)
+    report = scan_file(fixture_path / "visible_prompt.png", request, app_config)
+    # HUMAN_VIEW returns REVIEW for prompt injection; AGENT_WITH_TOOLS returns UNSUPPORTED
+    # without malware coverage — both mean no release grant, which is what we verify below.
+    assert report.decision.action in {PolicyAction.BLOCK, PolicyAction.REVIEW, PolicyAction.UNSUPPORTED}
     assert report.release_grants == []
     monkeypatch.setattr(artifact_routes, "load_config", lambda: app_config)
     client = TestClient(create_app())
@@ -25,7 +29,9 @@ def test_blocked_prompt_image_cannot_download_any_derivative(fixture_path, app_c
 
 
 def test_normal_endpoint_serves_only_release_granted_reconstruction(fixture_path, app_config):
-    report = scan_file(fixture_path / "clean.png", ScanRequest(original_filename="clean.png"), app_config)
+    from argus_img.core.enums import UseProfile
+    request = ScanRequest(original_filename="clean.png", use_profile=UseProfile.HUMAN_VIEW)
+    report = scan_file(fixture_path / "clean.png", request, app_config)
     store = ArtifactStore(Path(app_config.data_dir))
     released = store.get_artifact(report.artifacts["canonical_lossy"].artifact_id, release_only=True)
     assert released.role == "canonical_lossy"

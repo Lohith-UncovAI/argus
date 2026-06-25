@@ -525,11 +525,15 @@
       "enum": [
         "SUCCESS",
         "NO_EVIDENCE",
+        "DETECTED",
         "UNSUPPORTED",
         "TOOL_NOT_INSTALLED",
         "TIMEOUT",
         "ERROR",
-        "NOT_TESTED"
+        "NOT_TESTED",
+        "RESOURCE_LIMIT",
+        "MISSING",
+        "CANCELLED"
       ],
       "title": "DetectorStatus",
       "type": "string"
