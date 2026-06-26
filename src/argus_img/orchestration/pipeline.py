@@ -43,11 +43,14 @@ from argus_img.detectors.malware import malware_tool_statuses, run_clamav, run_y
 from argus_img.detectors.metadata import analyze_builtin_metadata, analyze_with_exiftool, exiftool_status
 from argus_img.detectors.ocr.merge import merge_text_observations
 from argus_img.detectors.ocr.paddle import paddle_status
+from argus_img.detectors.ocr.easyocr_detector import analyze_with_easyocr, easyocr_available
+from argus_img.detectors.ocr.vlm_detector import analyze_with_vlm, vlm_available
 from argus_img.detectors.ocr.tesseract import analyze_with_tesseract
 from argus_img.detectors.phishing import analyze_phishing
 from argus_img.detectors.privacy import analyze_privacy
 from argus_img.detectors.prompt.decoders import derive_text_candidates
 from argus_img.detectors.prompt.rules import PromptRuleBundle
+from argus_img.detectors.prompt.semantic import analyze_semantic
 from argus_img.detectors.provenance import provenance_status
 from argus_img.detectors.redaction_analysis import redaction_analysis_status
 from argus_img.detectors.steganography.statistics import image_entropy_summary
@@ -88,6 +91,7 @@ def _execution(
     category: str,
     required: bool = False,
     reason: Optional[str] = None,
+    started_at: Optional[datetime] = None,
 ) -> DetectorExecution:
     now = datetime.now(timezone.utc)
     return DetectorExecution(
@@ -97,7 +101,7 @@ def _execution(
         family=family,
         category=category,
         required=required,
-        started_at=now,
+        started_at=started_at or now,
         completed_at=now,
         reason=reason,
     )
@@ -385,13 +389,16 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         findings.extend(candidate_differential_findings)
         module_status["release_candidate_decoder"] = candidate_opencv_status
 
+        t0_meta = datetime.now(timezone.utc)
         metadata_report = analyze_builtin_metadata(snapshot_path, original.artifact_id, scan_id, include_raw_text=False)
+        metadata_report.execution.started_at = t0_meta
         _record_detector_report(metadata_report, detector_executions, findings, observations)
         module_status["metadata_builtin"] = ModuleStatus(
             name="metadata_builtin",
             status=metadata_report.execution.state,
             reason=metadata_report.execution.reason,
         )
+        t0_exif = datetime.now(timezone.utc)
         exiftool_report = analyze_with_exiftool(
             snapshot_path,
             original.artifact_id,
@@ -400,6 +407,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             config.limits.max_metadata_bytes,
             include_raw_text=False,
         )
+        exiftool_report.execution.started_at = t0_exif
         _record_detector_report(exiftool_report, detector_executions, findings, observations)
         module_status["exiftool"] = exiftool_status(exiftool_report)
         for error in exiftool_report.errors:
@@ -415,10 +423,12 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             config.limits.detector_timeout_seconds,
             max(1, int(budget.remaining_seconds())),
         )
+        t0_clamav = datetime.now(timezone.utc)
         clamav_report = run_clamav(
             snapshot_path, original.artifact_id, scan_id, detector_timeout,
             config.limits.max_subprocess_output_bytes,
         )
+        clamav_report.execution.started_at = t0_clamav
         _record_detector_report(clamav_report, detector_executions, findings, observations)
         module_status["clamav"] = ModuleStatus(
             name="clamav",
@@ -433,12 +443,14 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         )
         yara_cfg = config.yara
         yara_bundle = Path(yara_cfg.rule_bundle_path) if yara_cfg.rule_bundle_path else None
+        t0_yara = datetime.now(timezone.utc)
         yara_report = run_yara(
             snapshot_path, original.artifact_id, scan_id, detector_timeout,
             rule_bundle_path=yara_bundle,
             rule_bundle_sha256=yara_cfg.rule_bundle_sha256,
             max_output_bytes=config.limits.max_subprocess_output_bytes,
         )
+        yara_report.execution.started_at = t0_yara
         _record_detector_report(yara_report, detector_executions, findings, observations)
         module_status["yara"] = ModuleStatus(
             name="yara",
@@ -451,10 +463,12 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             config.limits.detector_timeout_seconds,
             max(1, int(budget.remaining_seconds())),
         )
+        t0_binwalk = datetime.now(timezone.utc)
         binwalk_report = run_binwalk(
             snapshot_path, original.artifact_id, scan_id, detector_timeout,
             config.limits.max_subprocess_output_bytes,
         )
+        binwalk_report.execution.started_at = t0_binwalk
         _record_detector_report(binwalk_report, detector_executions, findings, observations)
         module_status["binwalk"] = ModuleStatus(
             name="binwalk",
@@ -504,6 +518,8 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             for label, artifact in artifacts.items()
             if "thumbnail" in artifact.role
         ]
+        # transform_inputs already includes all named transforms (including preprocessing
+        # variants).  Do not append them again — the transform bank runs them all.
         transform_inputs = [(label, artifact, store.resolve_path(artifact)) for label, artifact in transforms.items()]
         ocr_inputs = [
             ("release_candidate", canonical["canonical_lossy"], release_candidate_path),
@@ -511,11 +527,14 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             ("flattened_white", canonical["flattened_white"], store.resolve_path(canonical["flattened_white"])),
             ("flattened_black", canonical["flattened_black"], store.resolve_path(canonical["flattened_black"])),
         ] + frame_inputs + thumbnail_inputs + transform_inputs
+
+        t0_tess = datetime.now(timezone.utc)
         ocr_report = analyze_with_tesseract(
             ocr_inputs,
             scan_id,
             min(config.limits.detector_timeout_seconds, max(1, int(budget.remaining_seconds()))),
             config.limits.max_subprocess_output_bytes,
+            started_at=t0_tess,
         )
         _record_detector_report(ocr_report, detector_executions, findings, observations)
         module_status["tesseract"] = ModuleStatus(
@@ -526,6 +545,42 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         )
         for error in ocr_report.errors:
             errors.append(ErrorRecord(source="tesseract", message=error))
+
+        # EasyOCR: neural OCR supplement for preprocessing transforms where Tesseract fails.
+        # Only runs in Deep/Forensic modes — too slow for Fast mode (model load ~14s on CPU).
+        plan = plan_for_mode(request.mode)
+        if easyocr_available() and "detector:easyocr" in plan.active_detectors:
+            t0_easy = datetime.now(timezone.utc)
+            seen_norm_tess = {obs.normalized_text for obs in observations if obs.normalized_text}
+            easyocr_report = analyze_with_easyocr(
+                ocr_inputs, scan_id, seen_normalized=seen_norm_tess, started_at=t0_easy,
+            )
+            _record_detector_report(easyocr_report, detector_executions, findings, observations)
+            module_status["easyocr"] = ModuleStatus(
+                name="easyocr",
+                status=easyocr_report.execution.state,
+                reason=easyocr_report.execution.reason,
+            )
+            for error in easyocr_report.errors:
+                errors.append(ErrorRecord(source="easyocr", message=error))
+
+        # VLM caption: SmolVLM-256M on MPS — Deep/Forensic modes only.
+        # Captions the canonical_lossless image and feeds the text through the
+        # semantic scorer pipeline for injection detection.
+        if vlm_available() and "detector:vlm-caption" in plan.active_detectors:
+            t0_vlm = datetime.now(timezone.utc)
+            seen_norm_vlm = {obs.normalized_text for obs in observations if obs.normalized_text}
+            vlm_report = analyze_with_vlm(
+                ocr_inputs, scan_id, seen_normalized=seen_norm_vlm, started_at=t0_vlm,
+            )
+            _record_detector_report(vlm_report, detector_executions, findings, observations)
+            module_status["vlm_caption"] = ModuleStatus(
+                name="vlm_caption",
+                status=vlm_report.execution.state,
+                reason=vlm_report.execution.reason,
+            )
+            for error in vlm_report.errors:
+                errors.append(ErrorRecord(source="vlm_caption", message=error))
 
         qr_report = analyze_qr(ocr_inputs, scan_id, include_raw_text=False)
         _record_detector_report(qr_report, detector_executions, findings, observations)
@@ -540,6 +595,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 derived_map[obs.observation_id] = [item.text for item in derived]
                 for item in derived:
                     budget.consume_text(item.text)
+        t0_rules = datetime.now(timezone.utc)
         rules = PromptRuleBundle.load_default()
         prompt_findings = rules.analyze_texts(observations, scan_id, include_raw_text=False, derived_texts=derived_map)
         findings.extend(prompt_findings)
@@ -551,8 +607,31 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 family="prompt",
                 category="prompt_injection",
                 required=True,
+                started_at=t0_rules,
             )
         )
+        # Skip observations already conclusively covered by rule-based findings to
+        # avoid duplicating findings and breaking transformation-trace contracts.
+        rule_covered_obs = {obs_id for f in prompt_findings for obs_id in f.observation_ids
+                            if f.state == EpistemicState.CONFIRMED}
+        t0_semantic = datetime.now(timezone.utc)
+        semantic_findings = analyze_semantic(
+            observations, scan_id, include_raw_text=False,
+            skip_observation_ids=rule_covered_obs,
+        )
+        findings.extend(semantic_findings)
+        detector_executions.append(
+            _execution(
+                "detector:semantic-scorer",
+                DetectorStatus.SUCCESS if semantic_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if semantic_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="prompt",
+                category="prompt_injection",
+                required=False,
+                started_at=t0_semantic,
+            )
+        )
+        t0_privacy = datetime.now(timezone.utc)
         privacy_findings = analyze_privacy(observations, scan_id, include_raw_text=False)
         findings.extend(privacy_findings)
         detector_executions.append(
@@ -562,8 +641,10 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 EpistemicState.CONFIRMED if privacy_findings else EpistemicState.NO_EVIDENCE_FOUND,
                 family="privacy",
                 category="privacy",
+                started_at=t0_privacy,
             )
         )
+        t0_phishing = datetime.now(timezone.utc)
         phishing_findings = analyze_phishing(observations, scan_id, include_raw_text=False)
         findings.extend(phishing_findings)
         detector_executions.append(
@@ -573,6 +654,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 EpistemicState.CONFIRMED if phishing_findings else EpistemicState.NO_EVIDENCE_FOUND,
                 family="phishing",
                 category="phishing",
+                started_at=t0_phishing,
             )
         )
         watermark_findings = analyze_visible_watermarks(observations, scan_id)

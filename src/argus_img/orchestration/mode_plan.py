@@ -44,6 +44,7 @@ FAST_PLAN = ModePlan(
         "detector:tesseract",
         "detector:qr-pyzbar",
         "detector:prompt-rules",
+        "detector:semantic-scorer",
         "detector:malware-clamav",
         "detector:malware-yara",
         "detector:embedded-binwalk",
@@ -62,6 +63,9 @@ FAST_PLAN = ModePlan(
         "green-channel",
         "blue-channel",
         "alpha-channel",
+        "white-text-extract",
+        "bg-normalised",
+        "sharpen-contrast",
     }),
     extract_frames=True,
     extract_thumbnails=True,
@@ -81,6 +85,8 @@ FAST_PLAN = ModePlan(
 DEEP_PLAN = ModePlan(
     mode=ScanMode.DEEP,
     active_detectors=FAST_PLAN.active_detectors | frozenset({
+        "detector:easyocr",
+        "detector:vlm-caption",
         "detector:decoder-differential",
         "detector:trailing-bytes",
         "detector:release-candidate-validation",

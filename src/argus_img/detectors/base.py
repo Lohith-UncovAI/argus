@@ -22,7 +22,9 @@ def detector_report(
     optional: bool = False,
     category: Optional[str] = None,
     required: bool = False,
+    started_at: Optional[datetime] = None,
 ) -> DetectorReport:
+    now = datetime.now(timezone.utc)
     manifest = DetectorManifest(detector_id=detector_id, name=detector_id, family=family, optional=optional)
     execution = DetectorExecution(
         detector_id=detector_id,
@@ -31,7 +33,8 @@ def detector_report(
         family=family,
         category=category,
         required=required,
-        completed_at=datetime.now(timezone.utc),
+        started_at=started_at or now,
+        completed_at=now,
         reason=reason,
     )
     return DetectorReport(

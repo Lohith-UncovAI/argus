@@ -115,12 +115,18 @@ class PromptRuleBundle:
                 active = context == "active"
                 state = EpistemicState.CONFIRMED if active else EpistemicState.POSSIBLE
                 likelihood = 0.95 if active else 0.35
+                matched_categories = {rule.category for rule in matching}
                 severity = "critical" if active and any(rule.severity == "critical" for rule in matching) else matching[0].severity
-                reason_codes = sorted({"PROMPT_INJECTION", *(rule.category.upper() for rule in matching)})
+                reason_codes = sorted({"PROMPT_INJECTION", *(cat.upper() for cat in matched_categories)})
                 if intent.get("requested_action") == "tool_call":
                     reason_codes.append("TOOL_INVOCATION_REQUEST")
-                if intent.get("credential_request"):
-                    reason_codes.append("CREDENTIAL_REQUEST")
+                if intent.get("credential_request") or "credential_request" in matched_categories:
+                    reason_codes = sorted(set(reason_codes) | {"CREDENTIAL_REQUEST"})
+                # Align intent fields with rule-matched categories so they never contradict.
+                if "instruction_override" in matched_categories:
+                    intent = {**intent, "authority_override": True}
+                if "credential_request" in matched_categories:
+                    intent = {**intent, "credential_request": True}
                 findings.append(
                     DetectorFinding(
                         finding_id="finding:%s:prompt:%03d" % (scan_id, len(findings)),

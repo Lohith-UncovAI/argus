@@ -109,6 +109,36 @@ def generate_fast_transformations(
         enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
         store_transformed("2x-enlargement", enlarged)
 
+    # OCR preprocessing variants — critical for recovering text overlaid on photos.
+    # White-text extraction: inverts then binarises, surfacing white/light text on
+    # complex backgrounds (the dominant CyberSecEval3 / real-world injection style).
+    if _active("white-text-extract"):
+        inv = ImageOps.invert(gray)
+        white_extract = inv.point(lambda p: 255 if p > 60 else 0)
+        store_transformed("white-text-extract", white_extract,
+                          {"method": "invert_threshold", "threshold": 60})
+
+    # High-contrast grayscale: divides each pixel by a blurred background estimate
+    # (background normalisation / unsharp divide).  Recovers low-contrast text
+    # overlaid on bright or textured backgrounds without over-darkening the image.
+    if _active("bg-normalised"):
+        import numpy as np
+        from PIL import ImageFilter
+        arr = np.array(gray).astype(np.float32)
+        blur = gray.filter(ImageFilter.GaussianBlur(radius=25))
+        blur_arr = np.array(blur).astype(np.float32) + 1.0
+        normalised = np.clip((arr / blur_arr) * 175, 0, 255).astype(np.uint8)
+        store_transformed("bg-normalised", Image.fromarray(normalised),
+                          {"method": "background_divide", "radius": 25, "scale": 175})
+
+    # Sharpen + contrast boost: recovers slightly blurred / low-resolution overlays.
+    if _active("sharpen-contrast"):
+        from PIL import ImageFilter, ImageEnhance
+        sharpened = ImageEnhance.Sharpness(gray).enhance(2.0)
+        boosted = ImageEnhance.Contrast(sharpened).enhance(3.0)
+        store_transformed("sharpen-contrast", boosted,
+                          {"sharpness": 2.0, "contrast": 3.0})
+
     return artifacts
 
 

@@ -31,13 +31,34 @@ def extract_intent(text: str) -> Dict[str, object]:
         requested_action = "tool_call"
     elif any(term in lower for term in ["send", "exfiltrate", "upload", "post to"]):
         requested_action = "data_exfiltration"
+
+    # Credential request: broad — covers direct naming AND extraction verbs near secret nouns.
+    _cred_nouns = ["password", "api key", "api_key", "token", "seed phrase", "private key",
+                   "secret key", "secret", "hidden value", "passphrase", "credential"]
+    _extract_verbs = ["print", "reveal", "output", "say", "mention", "report", "show", "disclose",
+                      "send", "upload", "expose", "repeat"]
+    cred_noun_hit = any(term in lower for term in _cred_nouns)
+    cred_verb_near = any(
+        v in lower and any(n in lower for n in _cred_nouns)
+        for v in _extract_verbs
+    )
+    credential_request = cred_noun_hit and (cred_verb_near or "only you know" in lower or "[value of" in lower)
+
+    # Authority override: covers instruction suppression and redirect patterns too.
+    authority_override = bool(re.search(
+        r"\b(ignore\s+(previous|prior|all)\s+instructions?|override\s+(system|developer)|"
+        r"do\s+not\s+mention\b|instead\s*(,\s*)?(print|say|output|reveal|mention|report)|"
+        r"forget\s+(previous|prior|all)|disregard|reset\s+(your\s+)?instructions?)\b",
+        lower,
+    ))
+
     return {
         "speaker_claim": "system" if "system" in lower else None,
         "requested_action": requested_action,
-        "target": "credential" if any(term in lower for term in ["password", "api key", "token", "secret"]) else None,
-        "authority_override": any(term in lower for term in ["ignore previous", "override", "developer message", "system prompt"]),
+        "target": "credential" if cred_noun_hit else None,
+        "authority_override": authority_override,
         "secrecy_requested": any(term in lower for term in ["do not tell", "secretly", "without telling"]),
         "data_exfiltration": any(term in lower for term in ["exfiltrate", "send to", "upload"]),
-        "credential_request": any(term in lower for term in ["password", "api key", "token", "seed phrase", "private key"]),
+        "credential_request": credential_request,
         "quoted_or_active": classify_text_context(text),
     }

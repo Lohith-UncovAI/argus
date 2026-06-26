@@ -4,6 +4,7 @@
 node_modules/
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
 venv/
 .venv/
@@ -21,3 +22,16 @@ report.json
 *.log
 
 tests/fixtures/*.png
+
+# Evaluation result archives and outputs
+evaluation-results.zip
+evaluation-results/
+*.zip
+result_*.json
+scan_output*.json
+
+# Claude Code session memory (project-local, not source)
+memory/
+
+# Hugging Face downloaded model weights
+.cache/
