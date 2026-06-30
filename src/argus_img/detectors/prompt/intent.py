@@ -16,10 +16,18 @@ def classify_text_context(text: str) -> str:
     if active_command:
         return "active"
     warning_markers = ["warning", "warns", "do not follow", "do not obey", "dangerous example"]
-    discussion_markers = ["article", "discuss", "example", "sample", "quoted", "attackers may", "known as prompt injection"]
+    # Check for discussion/educational context markers, but exclude cases where
+    # "example" appears only inside email addresses or domain names.
     if any(marker in lower for marker in warning_markers):
         return "warning"
-    if any(marker in lower for marker in discussion_markers):
+    # Strip email-like tokens (anything containing @) and bare domain names before
+    # checking for "example" — prevents "audit@example.invalid" from matching the
+    # "example" discussion marker.
+    stripped = re.sub(r'\S+@\S*', '', lower)
+    stripped = re.sub(r'\b\w+\.(com|org|net|io|invalid|example|localhost)\b', '', stripped)
+    discussion_markers = ["article", "discuss", "example", "sample", "quoted",
+                          "attackers may", "known as prompt injection"]
+    if any(marker in stripped for marker in discussion_markers):
         return "discussed"
     return "active"
 

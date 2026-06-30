@@ -23,3 +23,4 @@ class Limits(BaseModel):
     parser_timeout_seconds: int = Field(default=10, gt=0)
     detector_timeout_seconds: int = Field(default=30, gt=0)
     full_scan_timeout_seconds: int = Field(default=120, gt=0)
+    max_concurrent_scans: int = Field(default=4, gt=0)

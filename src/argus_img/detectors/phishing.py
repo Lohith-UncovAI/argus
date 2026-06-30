@@ -1,25 +1,65 @@
-from typing import List
+import re
+from typing import List, Tuple
 
 from argus_img.core.enums import EpistemicState, PolicyAction
 from argus_img.core.models import DetectorFinding, TextObservation
 from argus_img.reporting.excerpts import text_evidence
 
 
-INDICATORS = {
-    "password request": ["enter your password", "password required", "verify password"],
-    "seed phrase request": ["seed phrase", "recovery phrase"],
-    "payment request": ["payment required", "send payment", "wire transfer"],
-    "urgent security warning": ["urgent", "account suspended", "security alert"],
-    "fake software update": ["software update required", "install update now"],
-    "remote support request": ["remote support", "anydesk", "teamviewer"],
-}
+# Each entry: (indicator_name, phrases, co_occurrence_pairs)
+# phrases: any single phrase match fires the indicator
+# co_occurrence_pairs: list of (termA, termB) — BOTH must appear in the text
+_INDICATOR_RULES: List[Tuple[str, List[str], List[Tuple[str, str]]]] = [
+    ("password request", [
+        "enter your password", "password required", "verify password",
+        "verify your identity", "verify your account",
+    ], []),
+    ("credential harvesting", [
+        "confirm your card", "card details", "card number", "cvv",
+        "sign in to", "log in to",
+    ], []),
+    ("seed phrase request", [
+        "seed phrase", "recovery phrase", "24-word", "12-word",
+    ], []),
+    ("payment request", [
+        "payment required", "send payment", "wire transfer",
+        "payment verification", "confirm payment", "complete the transaction",
+        "scan qr to", "scan the code",
+    ], []),
+    ("urgent security warning", [
+        "account suspended", "security alert", "suspicious activity detected",
+        "click here to secure", "immediate action required",
+    ], [
+        ("urgent", "security"),
+        ("urgent", "suspicious"),
+    ]),
+    ("fake software update", [
+        "software update required", "install update now",
+        "critical security update", "update now to protect",
+    ], []),
+    ("remote support request", [
+        "remote support", "anydesk", "teamviewer",
+        "remote assistance", "allow our support", "access your screen",
+    ], []),
+]
 
 
-def analyze_phishing(texts: List[TextObservation], scan_id: str, include_raw_text: bool = False) -> List[DetectorFinding]:
+def _matches(lower: str, phrases: List[str], pairs: List[Tuple[str, str]]) -> bool:
+    if any(p in lower for p in phrases):
+        return True
+    return any(a in lower and b in lower for a, b in pairs)
+
+
+def analyze_phishing(
+    texts: List[TextObservation], scan_id: str, include_raw_text: bool = False
+) -> List[DetectorFinding]:
     findings: List[DetectorFinding] = []
     for obs in texts:
         lower = obs.normalized_text.lower()
-        matched = [name for name, terms in INDICATORS.items() if any(term in lower for term in terms)]
+        matched = [
+            name for name, phrases, pairs in _INDICATOR_RULES
+            if _matches(lower, phrases, pairs)
+        ]
         if not matched:
             continue
         findings.append(
@@ -41,4 +81,3 @@ def analyze_phishing(texts: List[TextObservation], scan_id: str, include_raw_tex
             )
         )
     return findings
-

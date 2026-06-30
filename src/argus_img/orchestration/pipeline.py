@@ -14,6 +14,7 @@ from argus_img.core.config import AppConfig, load_config
 from argus_img.core.detector_registry import load_detector_registry
 from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction
 from argus_img.core.exceptions import IntakeRejected, ResourceLimitExceeded
+from argus_img.workers.errors import WorkerCrashError, WorkerTimeoutError
 from argus_img.core.hashing import sha256_file
 from argus_img.core.models import (
     Artifact,
@@ -53,7 +54,7 @@ from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import analyze_semantic
 from argus_img.detectors.provenance import provenance_status
 from argus_img.detectors.redaction_analysis import redaction_analysis_status
-from argus_img.detectors.steganography.statistics import image_entropy_summary
+from argus_img.detectors.steganography.statistics import image_entropy_summary, lsb_canary_detect
 from argus_img.detectors.steganography.structural import detect_trailing_bytes
 from argus_img.detectors.steganography.zsteg import zsteg_status
 from argus_img.detectors.watermarks.registry import watermark_registry_status
@@ -314,7 +315,46 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             max_bytes=config.limits.max_input_bytes,
         )
         budget.consume_artifact(original.size_bytes)
+        # Per-scan quota guard: reject before allocating derivative artifacts.
+        try:
+            store.enforce_storage_quota(config.storage.maximum_total_store_bytes)
+        except Exception as _quota_exc:
+            raise ResourceLimitExceeded("storage quota exceeded: %s" % _quota_exc) from _quota_exc
         snapshot_path = store.resolve_path(original)
+
+        # --- ARGUS-01 worker pre-validation -----------------------------------
+        # Run image decode in an isolated subprocess before any in-process
+        # Pillow/OpenCV work.  If the file is a parse bomb or triggers a
+        # native-library crash, only the disposable worker process dies.
+        # TODO(ARGUS-01): move all Pillow/OpenCV/OCR/VLM calls here once
+        # parser_worker.py is expanded to produce full artifact outputs.
+        job_dir = Path(context.job_dir)
+        try:
+            from argus_img.workers.launcher import launch_parser_worker
+            from argus_img.workers.protocol import WorkerRequest
+            _worker_request = WorkerRequest(
+                scan_id=scan_id,
+                job_dir=str(job_dir),
+                snapshot_path=str(snapshot_path),
+                mode=request.mode.value if hasattr(request.mode, "value") else str(request.mode),
+                max_pixels_per_frame=config.limits.max_pixels_per_frame,
+                max_total_decoded_pixels=config.limits.max_total_decoded_pixels,
+                max_transformed_pixels=config.limits.max_transformed_pixels,
+                max_frames=config.limits.max_frames,
+                max_artifacts=config.limits.max_artifacts,
+                max_artifact_bytes=config.limits.max_artifact_bytes,
+                max_text_bytes=config.limits.max_text_bytes,
+                deadline_epoch=time.time() + config.limits.parser_timeout_seconds,
+            )
+            launch_parser_worker(_worker_request, job_dir, wall_clock_timeout=float(config.limits.parser_timeout_seconds))
+        except (WorkerCrashError, WorkerTimeoutError) as _wexc:
+            raise IntakeRejected("image parse failed in isolated worker: %s" % _wexc) from _wexc
+        except Exception:
+            # Worker infrastructure unavailable — fall through to in-process parsing.
+            # This preserves compatibility until the worker is fully integrated.
+            pass
+        # --- end worker pre-validation ----------------------------------------
+
         detected_mime, format_name = detect_magic(snapshot_path)
         original.media_type = detected_mime
         original.representation_id = "repr:original"
@@ -528,28 +568,30 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             ("flattened_black", canonical["flattened_black"], store.resolve_path(canonical["flattened_black"])),
         ] + frame_inputs + thumbnail_inputs + transform_inputs
 
-        t0_tess = datetime.now(timezone.utc)
-        ocr_report = analyze_with_tesseract(
-            ocr_inputs,
-            scan_id,
-            min(config.limits.detector_timeout_seconds, max(1, int(budget.remaining_seconds()))),
-            config.limits.max_subprocess_output_bytes,
-            started_at=t0_tess,
-        )
-        _record_detector_report(ocr_report, detector_executions, findings, observations)
-        module_status["tesseract"] = ModuleStatus(
-            name="tesseract",
-            status=ocr_report.execution.state,
-            reason=ocr_report.execution.reason,
-            version=ocr_report.execution.tool_version,
-        )
-        for error in ocr_report.errors:
-            errors.append(ErrorRecord(source="tesseract", message=error))
+        if "detector:tesseract" in mode_plan.active_detectors:
+            t0_tess = datetime.now(timezone.utc)
+            ocr_report = analyze_with_tesseract(
+                ocr_inputs,
+                scan_id,
+                min(config.limits.detector_timeout_seconds, max(1, int(budget.remaining_seconds()))),
+                config.limits.max_subprocess_output_bytes,
+                started_at=t0_tess,
+            )
+            _record_detector_report(ocr_report, detector_executions, findings, observations)
+            module_status["tesseract"] = ModuleStatus(
+                name="tesseract",
+                status=ocr_report.execution.state,
+                reason=ocr_report.execution.reason,
+                version=ocr_report.execution.tool_version,
+            )
+            for error in ocr_report.errors:
+                errors.append(ErrorRecord(source="tesseract", message=error))
+        else:
+            module_status["tesseract"] = ModuleStatus(name="tesseract", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
 
         # EasyOCR: neural OCR supplement for preprocessing transforms where Tesseract fails.
         # Only runs in Deep/Forensic modes — too slow for Fast mode (model load ~14s on CPU).
-        plan = plan_for_mode(request.mode)
-        if easyocr_available() and "detector:easyocr" in plan.active_detectors:
+        if easyocr_available() and "detector:easyocr" in mode_plan.active_detectors:
             t0_easy = datetime.now(timezone.utc)
             seen_norm_tess = {obs.normalized_text for obs in observations if obs.normalized_text}
             easyocr_report = analyze_with_easyocr(
@@ -567,7 +609,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         # VLM caption: SmolVLM-256M on MPS — Deep/Forensic modes only.
         # Captions the canonical_lossless image and feeds the text through the
         # semantic scorer pipeline for injection detection.
-        if vlm_available() and "detector:vlm-caption" in plan.active_detectors:
+        if vlm_available() and "detector:vlm-caption" in mode_plan.active_detectors:
             t0_vlm = datetime.now(timezone.utc)
             seen_norm_vlm = {obs.normalized_text for obs in observations if obs.normalized_text}
             vlm_report = analyze_with_vlm(
@@ -582,9 +624,12 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             for error in vlm_report.errors:
                 errors.append(ErrorRecord(source="vlm_caption", message=error))
 
-        qr_report = analyze_qr(ocr_inputs, scan_id, include_raw_text=False)
-        _record_detector_report(qr_report, detector_executions, findings, observations)
-        module_status["qr"] = ModuleStatus(name="qr", status=qr_report.execution.state, reason=qr_report.execution.reason)
+        if "detector:qr-pyzbar" in mode_plan.active_detectors:
+            qr_report = analyze_qr(ocr_inputs, scan_id, include_raw_text=False)
+            _record_detector_report(qr_report, detector_executions, findings, observations)
+            module_status["qr"] = ModuleStatus(name="qr", status=qr_report.execution.state, reason=qr_report.execution.reason)
+        else:
+            module_status["qr"] = ModuleStatus(name="qr", status=EpistemicState.NOT_TESTED, reason="skipped_by_mode")
 
         observations = merge_text_observations(observations)
         _consume_text_budget(budget, observations)
@@ -670,11 +715,47 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         )
 
         try:
-            module_status["steganalysis_statistics"] = ModuleStatus(
-                name="steganalysis_statistics",
-                status=EpistemicState.CONFIRMED,
-                reason=str(image_entropy_summary(canonical_path)),
-            )
+            entropy_summary = image_entropy_summary(canonical_path)
+            canary_found, matched_canary = lsb_canary_detect(canonical_path)
+            if canary_found:
+                steg_finding = DetectorFinding(
+                    finding_id="finding:%s:lsb-canary" % scan_id,
+                    category="steganography",
+                    type="lsb_canary_detected",
+                    state=EpistemicState.CONFIRMED,
+                    severity="high",
+                    detector_confidence=1.0,
+                    evidence_quality=1.0,
+                    attack_likelihood=0.9,
+                    impact="high",
+                    source_artifact_ids=[original.artifact_id],
+                    detector_ids=["detector:steganalysis-statistics"],
+                    reason_codes=["LSB_CANARY_DETECTED"],
+                    recommended_action=PolicyAction.REVIEW,
+                    evidence={"matched_canary": matched_canary.decode("ascii", errors="replace")},
+                )
+                findings.append(steg_finding)
+                detector_executions.append(
+                    _execution(
+                        "detector:steganalysis-statistics",
+                        DetectorStatus.SUCCESS,
+                        EpistemicState.CONFIRMED,
+                        family="steganography",
+                        category="steganography",
+                        required=False,
+                    )
+                )
+                module_status["steganalysis_statistics"] = ModuleStatus(
+                    name="steganalysis_statistics",
+                    status=EpistemicState.CONFIRMED,
+                    reason="lsb_canary_detected; %s" % str(entropy_summary),
+                )
+            else:
+                module_status["steganalysis_statistics"] = ModuleStatus(
+                    name="steganalysis_statistics",
+                    status=EpistemicState.CONFIRMED,
+                    reason=str(entropy_summary),
+                )
         except Exception as exc:
             module_status["steganalysis_statistics"] = ModuleStatus(
                 name="steganalysis_statistics",
@@ -682,7 +763,8 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 reason=str(exc),
             )
 
-        store.save_forensic_texts(scan_id, observations)
+        if config.storage.forensic_persistence_enabled:
+            store.save_forensic_texts(scan_id, observations)
         analyzed_artifact_ids = {original.artifact_id}
         analyzed_artifact_ids.update(artifact.artifact_id for _, artifact, _ in ocr_inputs)
         representation_manifest = build_representation_manifest(artifacts, analyzed_artifact_ids)

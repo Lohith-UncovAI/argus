@@ -10,12 +10,12 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = {text = "MIT"}
 dependencies = [
-  "fastapi==0.110.0",
+  "fastapi>=0.111.0,<0.120.0",
   "pydantic==2.5.3",
   "pillow==11.3.0",
   "PyYAML==6.0.3",
   "python-magic==0.4.27",
-  "python-multipart==0.0.9",
+  "python-multipart>=0.0.12",
   "pyzbar==0.1.9",
   "typer==0.12.5",
   "uvicorn==0.29.0",

@@ -101,6 +101,8 @@ def test_short_sensitive_text_is_forensic_only(tmp_path, app_config):
     meta = PngImagePlugin.PngInfo()
     meta.add_text("Description", "token=SECRET123456")
     Image.new("RGB", (500, 140), "white").save(meta_path, pnginfo=meta)
+    # Enable forensic persistence so we can verify the text was captured but not exposed
+    app_config.storage.forensic_persistence_enabled = True
     report = scan_file(meta_path, ScanRequest(original_filename="secret-meta.png"), app_config)
     public_payload = report_to_json(report)
     assert "SECRET123456" not in public_payload

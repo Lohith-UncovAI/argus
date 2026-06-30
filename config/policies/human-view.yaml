@@ -6,11 +6,27 @@ rules:
     priority: 1000
     when: {category: malware, state_in: [CONFIRMED, HIGHLY_LIKELY]}
     action: QUARANTINE
+  - id: human-block-prompt
+    priority: 800
+    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
+    action: BLOCK
   - id: human-review-prompt
     priority: 700
-    when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    when: {category: prompt_injection, state: POSSIBLE}
+    action: REVIEW
+  - id: human-review-embedded-payload
+    priority: 650
+    when: {category: embedded_payload, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    action: REVIEW
+  - id: human-review-phishing
+    priority: 620
+    when: {category: phishing, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    action: REVIEW
+  - id: human-review-steganography
+    priority: 600
+    when: {category: steganography, state_in: [CONFIRMED, HIGHLY_LIKELY]}
     action: REVIEW
   - id: human-redact-privacy
-    priority: 500
+    priority: 630
     when: {category: privacy, state: CONFIRMED}
     action: ALLOW_WITH_REDACTION

@@ -43,6 +43,10 @@ class StorageConfig(BaseModel):
     released_artifact_retention_seconds: float = Field(default=7 * 24 * 3600, gt=0)
     job_directory_retention_seconds: float = Field(default=3600, gt=0)
     orphan_grace_period_seconds: float = Field(default=300, ge=0)
+    # When False (default), raw OCR/VLM text is NOT persisted to the database.
+    # Set to True only when forensic logging is explicitly required and appropriate
+    # data-handling controls (encryption, access audit, retention enforcement) are in place.
+    forensic_persistence_enabled: bool = False
 
 
 class AppConfig(BaseModel):

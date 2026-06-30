@@ -139,6 +139,50 @@ def generate_fast_transformations(
         store_transformed("sharpen-contrast", boosted,
                           {"sharpness": 2.0, "contrast": 3.0})
 
+    # Low-contrast amplification: inverts the grayscale image then stretches the
+    # range with autocontrast (cutoff=2).  This surfaces near-white or near-same-
+    # colour text that was composited at low opacity into a light background — the
+    # kind of text that survives flatten-to-white with no visible trace but still
+    # differs slightly in RGB from the surrounding pixels.  The invert step brings
+    # the faint dark-on-light text up from the bottom of the histogram; autocontrast
+    # then stretches the tiny delta to full 0-255 so Tesseract can read it.
+    if _active("alpha-amplified"):
+        inv = ImageOps.invert(gray)
+        amplified = ImageOps.autocontrast(inv, cutoff=2)
+        store_transformed("alpha-amplified", amplified,
+                          {"method": "invert_autocontrast", "cutoff": 2})
+
+    # Channel-difference transforms: isolate text hidden by adding to one channel
+    # and subtracting from another (R+text, G-text → R-G reveals text).
+    # Threshold at mean+2σ of the difference to suppress background noise and
+    # produce a binary image readable by Tesseract.
+    import numpy as np
+    rgb_arr = np.array(image.convert("RGB")).astype(np.int32)
+    _diff_pairs = [
+        ("rg-difference", 0, 1),
+        ("rb-difference", 0, 2),
+        ("gb-difference", 1, 2),
+    ]
+    for diff_name, ch_a, ch_b in _diff_pairs:
+        if _active(diff_name):
+            diff = (rgb_arr[:, :, ch_a] - rgb_arr[:, :, ch_b]).astype(np.float32)
+            mean, std = diff.mean(), diff.std()
+            # Produce two thresholded views per channel pair: sigma=1.5 favours
+            # low-noise images; sigma=2.0 favours noisier backgrounds.  Tesseract
+            # runs on both; the scorer picks the highest-scoring observation.
+            for sigma, label_suffix in [(1.5, diff_name), (2.0, diff_name + "-hi")]:
+                if not _active(label_suffix):
+                    continue
+                binary = ((diff > mean + sigma * std) * 255).astype(np.uint8)
+                diff_img = Image.fromarray(binary, "L")
+                diff_img = diff_img.resize(
+                    (diff_img.width * 2, diff_img.height * 2), Image.Resampling.LANCZOS
+                )
+                store_transformed(label_suffix, diff_img,
+                                  {"method": "channel_difference_threshold", "sigma": sigma,
+                                   "upscale": 2,
+                                   "channels": diff_name.replace("-difference", "")})
+
     return artifacts
 
 

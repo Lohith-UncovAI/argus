@@ -1,8 +1,11 @@
 """EasyOCR-based neural OCR detector.
 
 Runs only on preprocessing-enhanced artifacts where Tesseract fails (photo-overlaid
-text, small/stylized fonts).  CPU-only — no GPU required.  Model weights are cached
-after first download (~50MB).
+text, small/stylized fonts).  CPU-only — no GPU required.
+
+Offline mode: set ARGUS_EASYOCR_MODEL_DIR to an absolute local directory containing
+pre-downloaded EasyOCR model weights.  Downloads are never attempted at runtime; a
+missing or unconfigured path causes the detector to report UNSUPPORTED.
 
 EasyOCR is used as a *supplement* to Tesseract, not a replacement.  It runs only on
 the enhanced transforms (bg-normalised, sharpen-contrast, white-text-extract) to
@@ -10,6 +13,7 @@ avoid redundant processing on clean images where Tesseract already succeeds.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -29,11 +33,15 @@ EASYOCR_TARGET_LABELS = frozenset({
 
 
 def easyocr_available() -> bool:
+    """Return True only when easyocr is installed AND a local model dir is configured."""
     try:
         import easyocr  # noqa: F401
-        return True
     except ImportError:
         return False
+    local = os.environ.get("ARGUS_EASYOCR_MODEL_DIR", "").strip()
+    if not local:
+        return False
+    return Path(local).is_dir()
 
 
 def _get_reader():
@@ -41,10 +49,17 @@ def _get_reader():
     if not hasattr(_get_reader, "_instance"):
         import easyocr
         import torch
+        model_dir = os.environ.get("ARGUS_EASYOCR_MODEL_DIR", "").strip() or None
         # EasyOCR treats gpu=True as "use CUDA or MPS" depending on platform.
         # On Apple Silicon this maps to MPS (~3.6x faster than CPU).
         use_gpu = torch.backends.mps.is_available()
-        _get_reader._instance = easyocr.Reader(["en"], gpu=use_gpu, verbose=False)
+        _get_reader._instance = easyocr.Reader(
+            ["en"],
+            gpu=use_gpu,
+            verbose=False,
+            model_storage_directory=model_dir,
+            download_enabled=False,
+        )
     return _get_reader._instance
 
 

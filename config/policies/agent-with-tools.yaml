@@ -38,6 +38,13 @@ rules:
       state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]
     action: REVIEW
     summary: Embedded or appended payload evidence needs review.
+  - id: review-steganography
+    priority: 640
+    when:
+      category: steganography
+      state_in: [CONFIRMED, HIGHLY_LIKELY]
+    action: REVIEW
+    summary: LSB steganography or known covert payload detected.
   - id: reconstructed-only-on-fragile-signal
     priority: 600
     when:

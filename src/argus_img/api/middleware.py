@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -91,3 +93,46 @@ class BodySizeLimitMiddleware:
         if limit_exceeded and not response_started:
             response = _error_413()
             await response(scope, receive, send)
+
+
+def _error_429() -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"error": {"code": "too_many_requests", "message": "server is at scan capacity; retry later"}},
+    )
+
+
+class ConcurrencyLimitMiddleware:
+    """Reject new scan requests when the in-flight scan count reaches max_concurrent.
+
+    Only POST /v1/scans is gated — read-only routes (GET /v1/scans/{id},
+    /v1/artifacts/*, /v1/attestation, /v1/capabilities, /v1/health) are not
+    affected.
+
+    Production note: this limit is per-process.  A reverse proxy or load-balancer
+    should enforce an additional global limit across replicas.
+    """
+
+    _SCAN_PATH = "/v1/scans"
+
+    def __init__(self, app: ASGIApp, max_concurrent: int) -> None:
+        self.app = app
+        self._semaphore = asyncio.Semaphore(max(1, max_concurrent))
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        is_scan_post = (
+            scope.get("method", "") == "POST"
+            and scope.get("path", "") == self._SCAN_PATH
+        )
+        if not is_scan_post:
+            await self.app(scope, receive, send)
+            return
+        if not self._semaphore._value:  # fast non-blocking check
+            response = _error_429()
+            await response(scope, receive, send)
+            return
+        async with self._semaphore:
+            await self.app(scope, receive, send)

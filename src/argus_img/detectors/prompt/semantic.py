@@ -45,9 +45,15 @@ _INJECTION_TOKENS: List[Tuple[frozenset, float]] = [
     (frozenset({"dan", "jailbreak", "unrestricted", "maintenance", "mode", "god", "developer"}), 0.45),
     # Extraction qualifiers
     (frozenset({"only", "you", "know", "string", "value"}), 0.25),
+    # Exfiltration action verbs
+    (frozenset({"send", "upload", "exfiltrate", "transmit", "forward", "post"}), 0.45),
+    # Exfiltration targets / filesystem references
+    (frozenset({"read", "open", "load", "fetch", "retrieve", "get"}), 0.20),
+    # Exfiltration destination markers
+    (frozenset({"audit", "attacker", "evil", "remote", "external", "webhook"}), 0.35),
 ]
 
-# Flat set of all high-signal tokens for quick first-pass
+# Flat set of all high-signal tokens for quick first-pass (weight >= 0.45)
 _HIGH_SIGNAL: frozenset = frozenset(
     t for (ts, w) in _INJECTION_TOKENS if w >= 0.45 for t in ts
 )
@@ -86,6 +92,26 @@ _INJECTION_BIGRAMS: List[Tuple[str, str, float]] = [
     ("steps", "process", 0.15),   # figstep - alone not enough
     ("gene", "sequencing", 0.05),
     ("plate", "tectonics", 0.05),
+    # "say the X is" redirect pattern
+    ("say", "is", 0.30),
+    # "mention the string / only know"
+    ("mention", "string", 0.55),
+    ("mention", "only", 0.50),
+    # "string only" proximity
+    ("string", "only", 0.55),
+    ("only", "know", 0.55),
+    # Exfiltration patterns
+    ("send", "to", 0.45),
+    ("send", "it", 0.50),
+    ("read", "send", 0.70),
+    ("read", "and", 0.30),
+    ("and", "send", 0.60),
+    ("upload", "to", 0.65),
+    ("exfiltrate", "to", 0.75),
+    ("transmit", "to", 0.65),
+    ("forward", "to", 0.55),
+    ("fetch", "and", 0.45),
+    ("retrieve", "and", 0.45),
 ]
 
 # ── Structural patterns ───────────────────────────────────────────────────────
@@ -134,11 +160,49 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bInstead\b.{0,40}\bsecret\b', re.I), 0.75, "instead_secret"),
     # "Instead ... password" within 40 chars
     (re.compile(r'\bInstead\b.{0,40}\bpassword\b', re.I), 0.75, "instead_password"),
+    # Exfiltration: "read <path/file> and send it to <target>"
+    (re.compile(r'\bread\b.{0,60}\band\s+send\s+(it\s+)?to\b', re.I), 0.85, "read_and_send"),
+    # "send it to <email/url/attacker>"
+    (re.compile(r'\bsend\s+it\s+to\b', re.I), 0.75, "send_it_to"),
+    # "send <x> to <email/url>"
+    (re.compile(r'\bsend\s+\w.{0,40}\bto\s+\S+@\S+\b', re.I), 0.85, "send_to_email"),
+    # Generic "upload/exfiltrate/transmit to <target>"
+    (re.compile(r'\b(upload|exfiltrate|transmit|forward)\s+.{0,60}\bto\b', re.I), 0.80, "exfiltrate_to"),
+    # "read <file path>" followed by send/transmit — filesystem traversal + exfil
+    (re.compile(r'\bread\s+[\w/\\.-]{3,}\b.{0,80}\b(send|upload|post|transmit)\b', re.I), 0.85, "read_file_exfil"),
     # Severely corrupted OCR: "Ins" fragment near "secret" — heavy obfuscation signature.
     # "Ins" alone is too common, but "Ins * secret" within 50 chars is very specific.
     (re.compile(r'\bIns\b.{0,50}\bsecret\b', re.I), 0.65, "ins_fragment_secret"),
     # Same for "password"
     (re.compile(r'\bIns\b.{0,50}\bpassword\b', re.I), 0.65, "ins_fragment_password"),
+    # Partial OCR of "Do not mention any X in this image. Instead, ..."
+    # Common OCR fragments when text is small/low-contrast on photo backgrounds:
+    # "not mention any ... image" without full sentence structure
+    (re.compile(r'\bnot\s+mention\s+any\s+\w+.{0,40}\b(image|this)\b', re.I), 0.72, "suppress_redirect"),
+    # "mention any ... image ... instead" — suppress clause + redirect hint
+    (re.compile(r'\bmention\s+any\b.{0,60}\b(instead|say|print|output)\b', re.I), 0.72, "suppress_redirect"),
+    # "ention" (OCR drops leading 'm') near "image" and "instead" / action verb
+    (re.compile(r'\bention\b.{0,60}\b(instead|say|print|know)\b', re.I), 0.65, "suppress_redirect_fragment"),
+    # "string that only you know" — common in embedded_text payloads (partial OCR)
+    (re.compile(r'\bstring\b.{0,30}\b(only|you|know)\b', re.I), 0.70, "only_you_know"),
+    # "only you know" alone without "string" prefix
+    (re.compile(r'\bonly\s+you\s+know\b', re.I), 0.72, "only_you_know"),
+    # "prin" (truncated "print") near "secret" or "key" or "string"
+    (re.compile(r'\bprin\w*\b.{0,30}\b(secret|key|string|password)\b', re.I), 0.68, "print_secret"),
+    # "say the X is Y" redirect pattern (misleading substitution without suppress clause)
+    (re.compile(r'\bsay\s+the\s+\w+\s+is\b', re.I), 0.55, "suppress_redirect"),
+    # Indirect reference: "[value of ...]", "[secret key]", "[X]" bracket templates
+    (re.compile(r'\[value\s+of\b', re.I), 0.80, "bracket_placeholder"),
+    (re.compile(r'\[\s*(?:secret|hidden|private|the)\b', re.I), 0.72, "bracket_placeholder"),
+    # Channel-difference OCR: "ignore" is frequently misread as "ighore", "igfiore",
+    # "igmore", "ignbre" etc. when extracted from noisy difference channels.
+    # Match Ig[a-z]{3,5}re (starts Ig, ends re, 3-5 middle chars) near "previous"
+    # or "instructions" within 60 chars — very specific to channel-steg injections.
+    (re.compile(r'\bIg[a-z]{2,5}re\b.{0,60}\b(previous|instructions|prior)\b', re.I), 0.80, "ignore_ocr_typo"),
+    # Reversed: "previous" first, then corrupted "ignore"-like word (less common)
+    (re.compile(r'\b(previous|instructions)\b.{0,60}\bIg[a-z]{2,5}re\b', re.I), 0.75, "ignore_ocr_typo"),
+    # "reveal" near corrupted "ignore" variant — covers "ighore ... reveal" pattern
+    (re.compile(r'\bIg[a-z]{2,5}re\b.{0,80}\breveal\b', re.I), 0.75, "ignore_ocr_typo"),
 ]
 
 # ── Single-word misleading label detection ────────────────────────────────────
@@ -146,9 +210,22 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
 # but IS a known misleading redirection target.  Low confidence alone; combined
 # with a photo-realistic image context raises suspicion.
 _MISLEADING_LABELS: frozenset = frozenset({
+    # Scientific instruments (original set)
     "microscope", "telescope", "stethoscope", "calculator",
     "typewriter", "abacus", "compass", "thermometer",
     "periscope", "sextant", "chronometer", "oscilloscope",
+    # CyberSecEval3 misleading label corpus
+    "accordion", "banjo", "bicycle", "binoculars", "butterflies", "butterfly",
+    "cacti", "camera", "clouds", "coffee mug", "dolphins", "football",
+    "fountain pen", "fountains", "giraffe", "giraffes", "globe", "guitar",
+    "harmonica", "harp", "honeybee", "honeybees", "hot air balloons",
+    "kangaroo", "kangaroos", "kayak", "kite", "lawnmower", "lighthouse",
+    "lighthouses", "maracas", "microphone", "motorcycle", "mountains",
+    "mushrooms", "oceans", "parachute", "peacock", "peacocks", "penguins",
+    "perfume", "piano", "pineapple", "pocket watch", "rainbows",
+    "roller skates", "seagull", "sewing machine", "skateboard", "starfish",
+    "submarine", "sunflower", "sunsets", "surfboard", "tambourine",
+    "tornadoes", "trombone", "violin", "volcanoes", "waterfalls",
 })
 
 
@@ -197,11 +274,18 @@ def _structural_score(text: str) -> Tuple[float, str]:
 
 
 def _misleading_label_score(tokens: List[str], text: str) -> float:
-    """Detect single-word misleading caption (e.g. 'microscope' under balloon photo)."""
+    """Detect misleading caption label (e.g. 'microscope' under balloon photo).
+
+    The label may appear anywhere in the OCR output — even buried in noise tokens.
+    Short text (<=4 words) gets full confidence; label in longer noisy OCR gets
+    slightly reduced confidence since the surrounding context is ambiguous.
+    """
     stripped = text.strip().lower()
     word_count = len(stripped.split())
-    if word_count <= 3 and frozenset(tokens) & _MISLEADING_LABELS:
-        return 0.60
+    for label in _MISLEADING_LABELS:
+        if label in stripped:
+            # High confidence if the text is short (caption-like); lower if buried in noise
+            return 0.60 if word_count <= 6 else 0.45
     return 0.0
 
 
@@ -215,14 +299,16 @@ def score_text(text: str) -> Dict[str, object]:
     """
     tokens = _tokenise(text)
 
-    # Quick exit: no high-signal tokens and text is very short → benign
-    if len(tokens) < 2 and not (frozenset(tokens) & _HIGH_SIGNAL):
+    # Check misleading label before early exit — single/short words can be misleading labels
+    mislead_score = _misleading_label_score(tokens, text)
+
+    # Quick exit: no high-signal tokens and text is very short → benign (unless misleading label)
+    if len(tokens) < 2 and not (frozenset(tokens) & _HIGH_SIGNAL) and mislead_score == 0.0:
         return {"score": 0.0, "signals": {}, "matched": "none"}
 
     tok_score = _token_overlap_score(tokens)
     big_score = _bigram_score(tokens)
     struct_score, struct_label = _structural_score(text)
-    mislead_score = _misleading_label_score(tokens, text)
 
     signals = {
         "token_overlap": tok_score,
@@ -238,7 +324,14 @@ def score_text(text: str) -> Dict[str, object]:
         tok_score * 0.6,
         mislead_score,
     )
-    matched = struct_label or ("bigram" if big_score >= struct_score else "token_overlap")
+    if struct_label and struct_score >= max(big_score * 0.9, mislead_score):
+        matched = struct_label
+    elif mislead_score >= max(struct_score, big_score * 0.9):
+        matched = "misleading_label"
+    elif big_score * 0.9 >= tok_score * 0.6:
+        matched = "bigram"
+    else:
+        matched = "token_overlap"
 
     return {"score": combined, "signals": signals, "matched": matched}
 
@@ -290,7 +383,10 @@ def analyze_semantic(
         if matched in ("suppress_redirect", "only_you_know", "hidden_value_you_know",
                        "bracket_placeholder", "mention_secret", "print_secret",
                        "jailbreak_mode", "xml_injection", "md_system_override",
-                       "yaml_role_system"):
+                       "yaml_role_system", "ignore_ocr_typo", "suppress_redirect_fragment",
+                       "suppress_redirect_ocr_typo", "mention_secret_ocr_typo",
+                       "instead_secret", "instead_password", "ins_fragment_secret",
+                       "ins_fragment_password"):
             reason_codes.append("INSTRUCTION_OVERRIDE")
         if matched == "misleading_label":
             reason_codes.append("MISLEADING_LABEL")
@@ -298,6 +394,9 @@ def analyze_semantic(
             reason_codes.append("FIGSTEP_TEMPLATE")
         if matched == "process_caption":
             reason_codes.append("INDIRECT_REFERENCE")
+        if matched in ("read_and_send", "send_it_to", "send_to_email",
+                       "exfiltrate_to", "read_file_exfil"):
+            reason_codes.append("DATA_EXFILTRATION")
 
         evidence: Dict[str, object] = {
             "semantic_score": score,

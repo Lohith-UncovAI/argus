@@ -1,10 +1,19 @@
 FROM python:3.12-slim
 RUN useradd -r -u 10001 argus
 WORKDIR /app
+
+# Copy the hash-pinned requirements export first so Docker can cache the
+# dependency layer independently of source changes.
+COPY requirements-pinned.txt /app/requirements-pinned.txt
+# Install all dependencies from the locked, hash-verified requirements file.
+RUN pip install --no-cache-dir --require-hashes -r requirements-pinned.txt
+
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 COPY config /app/config
-RUN pip install --no-cache-dir .
+# Install the project itself without resolving transitive deps (already installed above).
+RUN pip install --no-cache-dir --no-deps .
+
 USER argus
 CMD ["argus-img", "health"]
 

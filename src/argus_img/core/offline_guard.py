@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -38,15 +37,40 @@ class OfflineGuard:
             return False
         return "00000000" in route.read_text(encoding="utf-8", errors="ignore")
 
+    def _any_interface_up(self) -> bool:
+        """Passively check whether any non-loopback network interface is UP."""
+        net_dir = Path("/sys/class/net")
+        if not net_dir.exists():
+            # Non-Linux (e.g. macOS): conservatively report unknown as True.
+            return True
+        for iface in net_dir.iterdir():
+            if iface.name == "lo":
+                continue
+            state_file = iface / "operstate"
+            try:
+                if state_file.read_text(encoding="utf-8").strip() == "up":
+                    return True
+            except OSError:
+                continue
+        return False
+
     def self_test(self) -> dict:
-        result = {"strict": self.strict, "outbound_socket_blocked": None}
+        """Return passive network-isolation indicators — never makes outbound connections."""
+        dns = self.dns_appears_configured()
+        route = self.default_route_appears_configured()
+        iface_up = self._any_interface_up()
+        # outbound_socket_blocked: True when all passive indicators suggest no
+        # outbound path.  False when any indicator suggests connectivity exists.
+        # None when the check cannot be performed (non-Linux without /proc/net).
         if not self.strict:
-            result["outbound_socket_blocked"] = False
-            return result
-        try:
-            with socket.create_connection(("203.0.113.1", 9), timeout=0.25):
-                result["outbound_socket_blocked"] = False
-        except OSError:
-            result["outbound_socket_blocked"] = True
-        return result
+            outbound_blocked = None
+        else:
+            outbound_blocked = not (dns or route or iface_up)
+        return {
+            "strict": self.strict,
+            "dns_configured": dns,
+            "default_route_present": route,
+            "interface_up": iface_up,
+            "outbound_socket_blocked": outbound_blocked,
+        }
 

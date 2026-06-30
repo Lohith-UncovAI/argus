@@ -5,12 +5,16 @@ or CPU.  Produces a TextObservation from the model's caption, which is then fed
 through the existing semantic scorer and prompt-rule pipeline.
 
 Used only in Deep/Forensic modes — inference is ~2s/image on M-series MPS.
-Model weights are cached in ~/.cache/huggingface/hub after first download.
+
+Offline mode: set ARGUS_VLM_MODEL_PATH to an absolute local directory containing
+the pre-downloaded model weights.  Downloads are never attempted at runtime; a
+missing or unconfigured path causes the detector to report UNSUPPORTED.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -26,34 +30,45 @@ _MODEL_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
 _MAX_NEW_TOKENS = 200
 
 
+def _vlm_model_source() -> str:
+    """Return the local model path from env, or the Hub ID as fallback identifier."""
+    local = os.environ.get("ARGUS_VLM_MODEL_PATH", "").strip()
+    return local if local else _MODEL_ID
+
+
 def vlm_available() -> bool:
+    """Return True only when transformers is installed AND a local model path is configured."""
     try:
         import transformers  # noqa: F401
-        return True
     except ImportError:
         return False
+    local = os.environ.get("ARGUS_VLM_MODEL_PATH", "").strip()
+    if not local:
+        return False
+    return Path(local).is_dir()
 
 
 def _get_vlm():
     """Lazy singleton: load processor + model once, reuse across scans."""
     if not hasattr(_get_vlm, "_loaded"):
-        import json as _json
         import torch
-        from huggingface_hub import hf_hub_download
         from transformers import (
             Idefics3ForConditionalGeneration,
             Idefics3Processor,
         )
-        processor = Idefics3Processor.from_pretrained(_MODEL_ID)
+        source = _vlm_model_source()
+        # local_files_only prevents any outbound network access at load time.
+        processor = Idefics3Processor.from_pretrained(source, local_files_only=True)
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         model = Idefics3ForConditionalGeneration.from_pretrained(
-            _MODEL_ID,
+            source,
             dtype=torch.float32,
             _attn_implementation="eager",
+            local_files_only=True,
         ).to(device)
         model.eval()
         _get_vlm._loaded = (processor, model, device)
-        logger.info("SmolVLM-256M loaded on %s", device)
+        logger.info("SmolVLM-256M loaded on %s from %s", device, source)
     return _get_vlm._loaded
 
 

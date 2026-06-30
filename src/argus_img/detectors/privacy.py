@@ -8,8 +8,13 @@ from argus_img.reporting.excerpts import text_evidence
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 PHONE = re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b")
 API_KEY = re.compile(r"(?i)\b(?:api[_-]?key|token|secret)\s*[:=]\s*[A-Za-z0-9_\-]{12,}\b")
-PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+# OCR often converts '--' or '-----' to em-dashes/en-dashes; match either form.
+PRIVATE_KEY = re.compile(r"[-–—]{2,}BEGIN [A-Z ]*(?:PRIVATE KEY|CERTIFICATE|RSA)[-–—]{2,}", re.I)
 CARD = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+# Internal system indicators: DB connection strings, internal hostnames, version labels
+DB_CONN = re.compile(r"(?i)\b(?:postgres|mysql|mongodb|redis|sqlite|jdbc)\s*://\S+")
+INTERNAL_HOST = re.compile(r"(?i)\b\w[\w-]*\.internal\b")
+SYSTEM_LABEL = re.compile(r"(?i)\bsystem\s*:\s*\S+-(?:internal|prod|staging|dev)-\S*")
 
 
 def _luhn(candidate: str) -> bool:
@@ -34,6 +39,9 @@ def analyze_privacy(texts: List[TextObservation], scan_id: str, include_raw_text
         ("telephone_number", PHONE, "TELEPHONE_NUMBER"),
         ("api_key_like_string", API_KEY, "API_KEY_LIKE_STRING"),
         ("private_key_header", PRIVATE_KEY, "PRIVATE_KEY_HEADER"),
+        ("database_connection_string", DB_CONN, "DATABASE_CONNECTION_STRING"),
+        ("internal_hostname", INTERNAL_HOST, "INTERNAL_HOSTNAME"),
+        ("internal_system_label", SYSTEM_LABEL, "INTERNAL_SYSTEM_LABEL"),
     ]
     for obs in texts:
         text = obs.normalized_text

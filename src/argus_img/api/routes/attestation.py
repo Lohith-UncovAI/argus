@@ -37,10 +37,9 @@ def _rule_bundle_hashes(config) -> dict:
     return hashes
 
 
-def _self_test_status(guard: OfflineGuard) -> str:
+def _self_test_status(network_state: dict, strict: bool) -> str:
     """Return a verified self-test status string — not an unconditional claim."""
-    network_state = guard.self_test()
-    if guard.strict and not network_state.get("outbound_socket_blocked"):
+    if strict and not network_state.get("outbound_socket_blocked"):
         return "degraded:outbound_not_blocked"
     return "pass"
 
@@ -49,6 +48,7 @@ def _self_test_status(guard: OfflineGuard) -> str:
 def attestation():
     config = load_config()
     guard = OfflineGuard(strict=config.offline.strict)
+    # Call self_test exactly once — it makes no outbound connections.
     network_state = guard.self_test()
     installed_tools = _installed_tools()
     return {
@@ -66,7 +66,7 @@ def attestation():
         "network_offline_configuration_state": network_state,
         # self_test_status reflects verified checks; "pass" only when all
         # checks actually pass in the current runtime environment.
-        "self_test_status": _self_test_status(guard),
+        "self_test_status": _self_test_status(network_state, config.offline.strict),
         # air_gap_claim is permanently False: we cannot prove absence of all
         # outbound paths from within the process.
         "air_gap_claim": False,

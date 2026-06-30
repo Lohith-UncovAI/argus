@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from argus_img.api.errors import argus_exception_handler, http_exception_handler, validation_exception_handler
-from argus_img.api.middleware import BodySizeLimitMiddleware
+from argus_img.api.middleware import BodySizeLimitMiddleware, ConcurrencyLimitMiddleware
 from argus_img.api.routes import artifacts, attestation, capabilities, health, scans
 from argus_img.core.config import load_config
 from argus_img.core.exceptions import ArgusError
@@ -24,6 +24,8 @@ def _run_startup_lifecycle(config) -> None:
         # Per-category retention: expire old reports and revoke expired grants
         store.expire_old_reports(config.storage.report_retention_seconds)
         store.revoke_expired_grants(config.storage.released_artifact_retention_seconds)
+        # Forensic evidence has its own independent retention period.
+        store.cleanup_forensic_evidence(config.storage.forensic_evidence_retention_seconds)
         # Quota check: fail startup if already over quota
         store.enforce_storage_quota(config.storage.maximum_total_store_bytes)
     except ArgusError:
@@ -50,6 +52,11 @@ def create_app(max_body_bytes: int = 0) -> FastAPI:
         except Exception:
             max_body_bytes = 25_000_000
     app = FastAPI(title="ARGUS-IMG", version="0.1.0", lifespan=_lifespan)
+    try:
+        max_concurrent = load_config().limits.max_concurrent_scans
+    except Exception:
+        max_concurrent = 4
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=max_concurrent)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)

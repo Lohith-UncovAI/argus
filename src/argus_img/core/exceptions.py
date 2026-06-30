@@ -24,3 +24,7 @@ class OfflineGuardError(ArgusError):
 
 class ResourceLimitExceeded(ArgusError):
     """Raised when a scan exceeds a configured resource budget."""
+
+
+class ArtifactIntegrityError(ArgusError):
+    """Raised when a stored artifact fails re-verification (wrong content, symlink, etc.)."""

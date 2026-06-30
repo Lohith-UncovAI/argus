@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from argus_img.core.enums import EpistemicState
-from argus_img.core.exceptions import ArtifactAccessDenied, ArtifactNotReleased, IntakeRejected
+from argus_img.core.exceptions import ArtifactAccessDenied, ArtifactIntegrityError, ArtifactNotReleased, IntakeRejected
 from argus_img.core.hashing import bare_sha256, sha256_bytes
 from argus_img.core.models import Artifact, ArtifactTransformation, ModuleStatus, Observation, PolicyDecision, ReleaseGrant
 
@@ -292,6 +292,43 @@ class ArtifactStore:
         self._index_artifact(artifact)
         return artifact
 
+    def _verify_existing_artifact(self, dest: Path, expected_digest: str, expected_size: int) -> None:
+        """Re-verify an existing content-addressed file before reuse.
+
+        Raises ArtifactIntegrityError if the file is a symlink, not a regular
+        file, has wrong size, or its hash prefix does not match.
+        """
+        import stat as _stat
+        try:
+            st = dest.lstat()
+        except OSError as exc:
+            raise ArtifactIntegrityError("cannot stat existing artifact %s: %s" % (dest, exc)) from exc
+        if _stat.S_ISLNK(st.st_mode):
+            raise ArtifactIntegrityError("existing artifact path is a symlink: %s" % dest)
+        if not _stat.S_ISREG(st.st_mode):
+            raise ArtifactIntegrityError("existing artifact is not a regular file: %s" % dest)
+        if st.st_size != expected_size:
+            raise ArtifactIntegrityError(
+                "existing artifact size mismatch for %s: expected %d, got %d"
+                % (dest, expected_size, st.st_size)
+            )
+        # Re-hash the full existing file to confirm content integrity.
+        import hashlib
+        h = hashlib.sha256()
+        try:
+            fd = os.open(str(dest), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+        except OSError as exc:
+            raise ArtifactIntegrityError("cannot read existing artifact %s: %s" % (dest, exc)) from exc
+        actual = "sha256:" + h.hexdigest()
+        if actual != expected_digest:
+            raise ArtifactIntegrityError("existing artifact hash mismatch: %s" % dest)
+
     def store_file(
         self,
         path: Path,
@@ -308,6 +345,7 @@ class ArtifactStore:
         dest.parent.mkdir(parents=True, exist_ok=True)
         self._chmod(dest.parent, SECURE_DIR_MODE)
         if dest.exists():
+            self._verify_existing_artifact(dest, digest, size)
             tmp_path.unlink()
         else:
             os.replace(str(tmp_path), str(dest))
@@ -641,11 +679,31 @@ class ArtifactStore:
         return removed
 
     def delete_scan(self, scan_id: str) -> None:
-        """Delete all DB records and the report file for a scan."""
+        """Delete all DB records, artifact files, and the report file for a scan."""
+        # Collect artifact storage references before removing DB rows.
+        artifact_prefix = "artifact:%s:%%" % scan_id
+        with self._connect() as connection:
+            artifact_rows = connection.execute(
+                "SELECT storage_reference FROM artifacts WHERE artifact_id LIKE ?",
+                (artifact_prefix,),
+            ).fetchall()
+        storage_refs = [row["storage_reference"] for row in artifact_rows]
+
         with self._connect() as connection:
             connection.execute("DELETE FROM release_grants WHERE scan_id = ?", (scan_id,))
             connection.execute("DELETE FROM forensic_evidence WHERE scan_id = ?", (scan_id,))
             connection.execute("DELETE FROM reports WHERE scan_id = ?", (scan_id,))
+            connection.execute("DELETE FROM artifacts WHERE artifact_id LIKE ?", (artifact_prefix,))
+
+        # Remove artifact files after DB rows are gone so GC cannot race.
+        for ref in storage_refs:
+            try:
+                candidate = (self.base_dir / ref).resolve()
+                if str(candidate).startswith(str(self.base_dir) + os.sep) and candidate.exists():
+                    candidate.unlink()
+            except OSError:
+                pass
+
         report_path = (self.reports_dir / (scan_id + ".json")).resolve()
         if str(report_path).startswith(str(self.reports_dir.resolve()) + os.sep) and report_path.exists():
             report_path.unlink()
@@ -692,6 +750,19 @@ class ArtifactStore:
         for scan_id in deleted:
             self.delete_scan(scan_id)
         return deleted
+
+    def cleanup_forensic_evidence(self, max_age_seconds: float) -> int:
+        """Delete forensic_evidence rows older than max_age_seconds, independent of report retention.
+
+        Returns the number of rows deleted.
+        """
+        cutoff = time.time() - max_age_seconds
+        with self._connect() as connection:
+            result = connection.execute(
+                "DELETE FROM forensic_evidence WHERE created_at <= ?",
+                (cutoff,),
+            )
+            return result.rowcount
 
     def capability_status(self) -> ModuleStatus:
         return ModuleStatus(name="artifact_store", status=EpistemicState.CONFIRMED, reason=str(self.db_path))
