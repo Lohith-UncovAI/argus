@@ -695,17 +695,21 @@ def test_orphan_recovery_and_gc(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_attestation_stub_detectors_listed(app_config, monkeypatch):
-    """Attestation endpoint lists malware stubs correctly."""
+    """Attestation endpoint lists optional detectors whose binaries are absent as stubs."""
+    import shutil as _shutil
     from argus_img.api.routes import attestation as att_routes
     monkeypatch.setattr(att_routes, "load_config", lambda: app_config)
+    # Simulate all optional tool binaries being absent so the dynamic stub list fires.
+    monkeypatch.setattr(_shutil, "which", lambda _: None)
     client = TestClient(create_app())
     response = client.get("/v1/attestation")
     assert response.status_code == 200
     body = response.json()
     stubs = body["stub_detectors"]
-    assert "malware-clamav" in stubs
-    assert "malware-yara" in stubs
-    assert "embedded-binwalk" in stubs
+    # Dynamic _stub_detectors() returns full detector IDs (e.g. "detector:malware-clamav").
+    assert "detector:malware-clamav" in stubs
+    assert "detector:malware-yara" in stubs
+    assert "detector:embedded-binwalk" in stubs
 
 
 # ---------------------------------------------------------------------------

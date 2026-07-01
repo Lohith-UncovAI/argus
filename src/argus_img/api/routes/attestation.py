@@ -1,5 +1,6 @@
 import shutil
 import sys
+from typing import List
 
 from fastapi import APIRouter
 
@@ -24,6 +25,34 @@ def _installed_tools() -> dict:
             "c2pa": "c2patool",
         }.items()
     }
+
+
+def _stub_detectors() -> List[str]:
+    """Return detector IDs that require external tools not guaranteed installed."""
+    try:
+        from argus_img.core.config import load_yaml_config
+        registry = load_yaml_config(("detector_registry.yaml",))
+        stubs = []
+        for d in registry.get("detectors", []):
+            det_id = d.get("id", "")
+            required = d.get("required", False)
+            # A non-required detector that depends on an external binary is a stub
+            # when that binary is absent. Map known detector→binary relationships.
+            _BINARY_MAP = {
+                "detector:malware-clamav": "clamscan",
+                "detector:malware-yara": "yara",
+                "detector:embedded-binwalk": "binwalk",
+                "detector:exiftool": "exiftool",
+                "detector:zsteg": "zsteg",
+                "detector:c2pa": "c2patool",
+                "detector:paddleocr": "paddleocr",
+            }
+            binary = _BINARY_MAP.get(det_id)
+            if not required and binary and not shutil.which(binary):
+                stubs.append(det_id)
+        return stubs
+    except Exception:
+        return ["detector:malware-clamav", "detector:malware-yara", "detector:embedded-binwalk"]
 
 
 def _rule_bundle_hashes(config) -> dict:
@@ -74,5 +103,5 @@ def attestation():
         "mandatory_tools_available": {
             "tesseract": installed_tools.get("tesseract", False),
         },
-        "stub_detectors": ["malware-clamav", "malware-yara", "embedded-binwalk"],
+        "stub_detectors": _stub_detectors(),
     }

@@ -141,6 +141,8 @@ def load_config(path: Optional[Path] = None, config_root: Optional[Path] = None)
         data["data_dir"] = os.environ["ARGUS_DATA_DIR"]
     if os.environ.get("ARGUS_OFFLINE_STRICT"):
         data.setdefault("offline", {})["strict"] = os.environ["ARGUS_OFFLINE_STRICT"].lower() in {"1", "true", "yes"}
+    if os.environ.get("ARGUS_STORAGE_MAX_BYTES"):
+        data.setdefault("storage", {})["maximum_total_store_bytes"] = int(os.environ["ARGUS_STORAGE_MAX_BYTES"])
     try:
         return AppConfig.model_validate(data)
     except ValidationError as exc:

@@ -71,10 +71,12 @@ class ArtifactStore:
                     role TEXT NOT NULL,
                     release_eligible INTEGER NOT NULL DEFAULT 0,
                     payload TEXT NOT NULL,
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    scan_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_artifacts_sha256 ON artifacts(sha256);
                 CREATE INDEX IF NOT EXISTS idx_artifacts_role ON artifacts(role);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_scan ON artifacts(scan_id);
 
                 CREATE TABLE IF NOT EXISTS release_grants (
                     grant_id TEXT PRIMARY KEY,
@@ -114,6 +116,12 @@ class ArtifactStore:
                 );
                 """
             )
+        # Schema migration: add scan_id column to existing databases that predate it.
+        with self._connect() as connection:
+            cols = {row[1] for row in connection.execute("PRAGMA table_info(artifacts)")}
+            if "scan_id" not in cols:
+                connection.execute("ALTER TABLE artifacts ADD COLUMN scan_id TEXT")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_scan ON artifacts(scan_id)")
         for path in self.base_dir.glob("argus.sqlite3*"):
             if path.is_file():
                 self._chmod(path, SECURE_FILE_MODE)
@@ -201,14 +209,28 @@ class ArtifactStore:
                     pass
             raise
 
+    @staticmethod
+    def _scan_id_from_artifact_id(artifact_id: str) -> Optional[str]:
+        """Extract scan_id from artifact_id convention 'artifact:{scan_id}:{role}'.
+
+        scan_id itself may contain colons (e.g. 'scan:abc123'), so we join
+        everything between the first and last colon-delimited segment.
+        """
+        parts = artifact_id.split(":")
+        # Need at least: "artifact", one scan_id segment, and one role segment.
+        if len(parts) >= 3 and parts[0] == "artifact":
+            return ":".join(parts[1:-1])
+        return None
+
     def _index_artifact(self, artifact: Artifact) -> None:
         payload = artifact.model_dump_json()
+        scan_id = self._scan_id_from_artifact_id(artifact.artifact_id)
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO artifacts
-                    (artifact_id, sha256, storage_reference, role, release_eligible, payload, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (artifact_id, sha256, storage_reference, role, release_eligible, payload, created_at, scan_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     artifact.artifact_id,
@@ -218,6 +240,7 @@ class ArtifactStore:
                     1 if artifact.release_eligible else 0,
                     payload,
                     time.time(),
+                    scan_id,
                 ),
             )
 
@@ -681,11 +704,11 @@ class ArtifactStore:
     def delete_scan(self, scan_id: str) -> None:
         """Delete all DB records, artifact files, and the report file for a scan."""
         # Collect artifact storage references before removing DB rows.
-        artifact_prefix = "artifact:%s:%%" % scan_id
+        # Use scan_id column (exact match) — more correct than LIKE on artifact_id prefix.
         with self._connect() as connection:
             artifact_rows = connection.execute(
-                "SELECT storage_reference FROM artifacts WHERE artifact_id LIKE ?",
-                (artifact_prefix,),
+                "SELECT storage_reference FROM artifacts WHERE scan_id = ?",
+                (scan_id,),
             ).fetchall()
         storage_refs = [row["storage_reference"] for row in artifact_rows]
 
@@ -693,7 +716,7 @@ class ArtifactStore:
             connection.execute("DELETE FROM release_grants WHERE scan_id = ?", (scan_id,))
             connection.execute("DELETE FROM forensic_evidence WHERE scan_id = ?", (scan_id,))
             connection.execute("DELETE FROM reports WHERE scan_id = ?", (scan_id,))
-            connection.execute("DELETE FROM artifacts WHERE artifact_id LIKE ?", (artifact_prefix,))
+            connection.execute("DELETE FROM artifacts WHERE scan_id = ?", (scan_id,))
 
         # Remove artifact files after DB rows are gone so GC cannot race.
         for ref in storage_refs:

@@ -52,6 +52,7 @@ FAST_PLAN = ModePlan(
         "detector:phishing-rules",
         "detector:visible-watermark-rules",
         "detector:steganalysis-statistics",
+        "detector:vlm-caption",
     }),
     active_transformations=frozenset({
         "canonical_lossless",
@@ -73,6 +74,8 @@ FAST_PLAN = ModePlan(
         "rg-difference-hi",
         "rb-difference-hi",
         "gb-difference-hi",
+        "clahe",
+        "deskew",
     }),
     extract_frames=True,
     extract_thumbnails=True,

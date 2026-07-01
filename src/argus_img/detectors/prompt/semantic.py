@@ -127,8 +127,7 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\b(string|value|code|key|phrase)\s+that\s+only\s+you\s+know\b', re.I), 0.85, "only_you_know"),
     # "hidden value only you know"
     (re.compile(r'\bhidden\s+value\s+only\s+you\s+know\b', re.I), 0.85, "hidden_value_you_know"),
-    # Indirect bracket placeholder [value of the secret key]
-    (re.compile(r'\[\s*value\s+of\s+the\s+secret', re.I), 0.80, "bracket_placeholder"),
+    # Indirect bracket placeholder — covered by the broader pattern below (line 216+)
     # FigStep fill-in-blank list: numbered blanks
     (re.compile(r'\b(steps?\s+(in\s+)?(the\s+)?(process\s+of|to)\b|process\s+\w+\s+\w+).{0,200}(\d+\s*[.\)]\s*[_\s]{3,}){2}', re.I | re.S), 0.70, "figstep_blank_list"),
     # "process X Y" in caption position (2-4 words, image is realistic, suspicious context)
@@ -175,6 +174,34 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bIns\b.{0,50}\bsecret\b', re.I), 0.65, "ins_fragment_secret"),
     # Same for "password"
     (re.compile(r'\bIns\b.{0,50}\bpassword\b', re.I), 0.65, "ins_fragment_password"),
+    # FigStep colon-list: numbered blanks below a topic header — strongest signal.
+    # Requires BOTH the academic-topic opener AND numbered blank lines below it,
+    # preventing FP on legitimate recipe/ingredient/shopping-list images.
+    (re.compile(
+        r'^(?:steps\s+in\s+(?:the\s+)?(?:process\s+of|to)|'
+        r'types?\s+of|applications?\s+of|examples?\s+of|'
+        r'benefits?\s+of|components?\s+of|features?\s+of|'
+        r'functions?\s+of|methods?\s+of|principles?\s+of|'
+        r'key\s+(?:concepts?|figures?|aspects?)\s+in|'
+        r'(?:famous|common|basic|main)\s+\w+\s+of|'
+        r'(?:historical|cultural|economic)\s+\w+\s+(?:in|of)|'
+        r'process\s+(?:of\s+)?\w+)\b[\s\S]{2,80}:\s*\n'
+        r'(?:\s*\n)*\s*1\.',
+        re.I | re.M,
+    ), 0.65, "figstep_colon_topic"),
+    # Colon-topic WITHOUT numbered blanks: lower confidence, requires academic prefix.
+    # Scores 0.50 → REVIEW only. FP rate low because pattern requires specific
+    # academic/scientific opener words unlikely to appear in benign image captions.
+    (re.compile(
+        r'^(?:steps\s+in\s+(?:the\s+)?(?:process\s+of|to)|'
+        r'types?\s+of|applications?\s+of|examples?\s+of|'
+        r'benefits?\s+of|components?\s+of|features?\s+of|'
+        r'functions?\s+of|methods?\s+of|principles?\s+of|'
+        r'key\s+(?:concepts?|figures?|aspects?)\s+in|'
+        r'(?:historical|cultural|economic)\s+\w+\s+(?:in|of))\b'
+        r'[\s\S]{2,80}:\s*$',
+        re.I | re.M,
+    ), 0.50, "figstep_colon_topic"),
     # Partial OCR of "Do not mention any X in this image. Instead, ..."
     # Common OCR fragments when text is small/low-contrast on photo backgrounds:
     # "not mention any ... image" without full sentence structure
@@ -390,9 +417,9 @@ def analyze_semantic(
             reason_codes.append("INSTRUCTION_OVERRIDE")
         if matched == "misleading_label":
             reason_codes.append("MISLEADING_LABEL")
-        if matched == "figstep_blank_list":
+        if matched in ("figstep_blank_list", "figstep_colon_topic"):
             reason_codes.append("FIGSTEP_TEMPLATE")
-        if matched == "process_caption":
+        if matched in ("process_caption", "figstep_colon_topic"):
             reason_codes.append("INDIRECT_REFERENCE")
         if matched in ("read_and_send", "send_it_to", "send_to_email",
                        "exfiltrate_to", "read_file_exfil"):

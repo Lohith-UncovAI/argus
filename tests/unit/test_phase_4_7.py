@@ -273,9 +273,12 @@ def test_api_ignores_sanitize_redact_form_fields(fixture_path, app_config, monke
 
 def test_attestation_does_not_claim_unconditional_pass(app_config, monkeypatch):
     """self_test_status must reflect actual checks, not a hard-coded 'pass'."""
+    import shutil as _shutil
     from argus_img.api.routes import attestation as att_routes
 
     monkeypatch.setattr(att_routes, "load_config", lambda: app_config)
+    # Simulate optional tool binaries absent so stub_detectors list is populated.
+    monkeypatch.setattr(_shutil, "which", lambda _: None)
     client = TestClient(create_app())
     response = client.get("/v1/attestation")
     assert response.status_code == 200
@@ -283,7 +286,7 @@ def test_attestation_does_not_claim_unconditional_pass(app_config, monkeypatch):
     assert "self_test_status" in body
     assert body["air_gap_claim"] is False
     assert "stub_detectors" in body
-    assert "malware-clamav" in body["stub_detectors"]
+    assert "detector:malware-clamav" in body["stub_detectors"]
     assert "network_offline_configuration_state" in body
     # python_version must be a verified runtime fact
     assert "python_version" in body

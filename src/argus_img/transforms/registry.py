@@ -152,6 +152,50 @@ def generate_fast_transformations(
         store_transformed("alpha-amplified", amplified,
                           {"method": "invert_autocontrast", "cutoff": 2})
 
+    # CLAHE (Contrast Limited Adaptive Histogram Equalization): recovers low-contrast
+    # text on textured/photo backgrounds by equalising local tile contrast.
+    # Particularly effective for obfuscated text injections blended into photos.
+    if _active("clahe"):
+        import numpy as np
+        import cv2
+        gray_arr = np.array(gray)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        clahe_arr = clahe.apply(gray_arr)
+        store_transformed("clahe", Image.fromarray(clahe_arr),
+                          {"method": "clahe", "clip_limit": 3.0, "tile_grid": 8})
+
+    # Deskew + CLAHE: corrects rotated/skewed injected text then enhances contrast.
+    # Hough-line deskew works on binary edges, then CLAHE makes it OCR-readable.
+    if _active("deskew"):
+        import numpy as np
+        import cv2
+        gray_arr = np.array(gray)
+        # Edge detect for Hough
+        edges = cv2.Canny(gray_arr, 50, 150, apertureSize=3)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=80,
+                                minLineLength=gray_arr.shape[1] // 4, maxLineGap=20)
+        if lines is not None and len(lines) > 0:
+            angles = [np.degrees(np.arctan2(y2 - y1, x2 - x1))
+                      for x1, y1, x2, y2 in lines[:, 0]]
+            # Keep only near-horizontal lines (within ±15°)
+            horiz = [a for a in angles if abs(a) < 15]
+            angle = float(np.median(horiz)) if horiz else 0.0
+        else:
+            angle = 0.0
+        if abs(angle) > 0.3:
+            h, w = gray_arr.shape
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+            deskewed = cv2.warpAffine(gray_arr, M, (w, h),
+                                     flags=cv2.INTER_LINEAR,
+                                     borderMode=cv2.BORDER_REPLICATE)
+        else:
+            deskewed = gray_arr
+        # Apply CLAHE after deskew
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        deskewed = clahe.apply(deskewed)
+        store_transformed("deskew", Image.fromarray(deskewed),
+                          {"method": "deskew_clahe", "angle_corrected": round(angle, 2)})
+
     # Channel-difference transforms: isolate text hidden by adding to one channel
     # and subtracting from another (R+text, G-text → R-G reveals text).
     # Threshold at mean+2σ of the difference to suppress background noise and
