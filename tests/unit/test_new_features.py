@@ -81,9 +81,9 @@ def test_figstep_recipe_list_below_block():
     assert _score(text) < 0.55
 
 
-def test_figstep_bare_topic_below_review():
-    """A bare indirect-reference topic without numbered blanks should not be detected."""
-    assert _score("nuclear fission") < 0.35
+def test_figstep_bare_known_topic_detected():
+    """'nuclear fission' is a known indirect-reference misleading label and must score at BLOCK."""
+    assert _score("nuclear fission") >= 0.55
 
 
 # ---------------------------------------------------------------------------

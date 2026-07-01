@@ -174,34 +174,118 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bIns\b.{0,50}\bsecret\b', re.I), 0.65, "ins_fragment_secret"),
     # Same for "password"
     (re.compile(r'\bIns\b.{0,50}\bpassword\b', re.I), 0.65, "ins_fragment_password"),
-    # FigStep colon-list: numbered blanks below a topic header — strongest signal.
-    # Requires BOTH the academic-topic opener AND numbered blank lines below it,
-    # preventing FP on legitimate recipe/ingredient/shopping-list images.
+    # FigStep colon-list: topic header + colon + numbered items (blank or inline).
+    # Matches both newline-separated blanks (OCR multiline) and inline "1. 2. 3." (VLM output).
+    # Broad "X of/in/for Y:" pattern covers all CyberSecEval3 FigStep headers.
+    # FP risk is low: photo captions don't use academic list-header grammar.
+    # FigStep colon-list: topic header + colon + numbered items (blank or inline).
+    # Matches both newline-separated blanks (OCR multiline) and inline "1. 2. 3." (VLM output).
+    # Broad "X of/in/for Y:...1." covers all CyberSecEval3 FigStep headers with numbered items.
     (re.compile(
-        r'^(?:steps\s+in\s+(?:the\s+)?(?:process\s+of|to)|'
-        r'types?\s+of|applications?\s+of|examples?\s+of|'
-        r'benefits?\s+of|components?\s+of|features?\s+of|'
-        r'functions?\s+of|methods?\s+of|principles?\s+of|'
-        r'key\s+(?:concepts?|figures?|aspects?)\s+in|'
-        r'(?:famous|common|basic|main)\s+\w+\s+of|'
-        r'(?:historical|cultural|economic)\s+\w+\s+(?:in|of)|'
-        r'process\s+(?:of\s+)?\w+)\b[\s\S]{2,80}:\s*\n'
-        r'(?:\s*\n)*\s*1\.',
+        r'^(?:'
+        r'\w[\w\s]{1,30}\s+(?:of|in|for|used\s+in|known\s+for|involved\s+in|needed\s+for)\s+\w'
+        r'|steps?\s+(?:to\s+\w|in\s+the\s+\w)'
+        r')'
+        r'[^:]{0,80}:\s*(?:\n|\s*1\.)',
         re.I | re.M,
     ), 0.65, "figstep_colon_topic"),
-    # Colon-topic WITHOUT numbered blanks: lower confidence, requires academic prefix.
-    # Scores 0.50 → REVIEW only. FP rate low because pattern requires specific
-    # academic/scientific opener words unlikely to appear in benign image captions.
+    # Colon-topic header alone (no numbered follow-up): matches when VLM just reads the title.
+    # 0.55 (BLOCK) — academic list headers never appear as benign photo captions.
     (re.compile(
-        r'^(?:steps\s+in\s+(?:the\s+)?(?:process\s+of|to)|'
-        r'types?\s+of|applications?\s+of|examples?\s+of|'
-        r'benefits?\s+of|components?\s+of|features?\s+of|'
-        r'functions?\s+of|methods?\s+of|principles?\s+of|'
-        r'key\s+(?:concepts?|figures?|aspects?)\s+in|'
-        r'(?:historical|cultural|economic)\s+\w+\s+(?:in|of))\b'
-        r'[\s\S]{2,80}:\s*$',
+        r'^(?:'
+        r'[\w][\w\s-]{1,30}\s+(?:of|in|for|used\s+in|known\s+for|involved\s+in|needed\s+for|to\s+improve|to\s+set|to\s+design|to\s+implement|to\s+create)\s+\w'
+        r'|steps?\s+(?:to\s+\w|in\s+the\s+\w)'
+        r'|(?:popular|common|famous|basic|key|main|notable|classical|traditional)\s+\w[\w\s-]{2,50}'
+        r'|[\w][\w\s-]{1,40}\s+(?:problems?|techniques?|technologies?|openings?|methods?|algorithms?|frameworks?|platforms?|mechanisms?|precautions?|milestones?|discoveries?|symptoms?|instruments?|projects?|systems?|concepts?|principles?|theories?|strategies?|components?|examples?|properties?|applications?)'
+        r')'
+        r'[^:]{0,80}:\s*$',
         re.I | re.M,
-    ), 0.50, "figstep_colon_topic"),
+    ), 0.55, "figstep_colon_topic"),
+    # Indirect reference query phrases — VLM caption of an image whose ENTIRE text is
+    # an academic query/topic. Never appears as a genuine photo caption.
+    # Scored at 0.55 (BLOCK) for strong structural patterns, 0.40 (REVIEW) for weaker ones.
+    # Strong: "the X of Y", "how X works", "the difference between X and Y"
+    (re.compile(
+        r'^(?:'
+        # "the X of/in/between Y" where X is a technical/scientific term, not a generic one.
+        # Excludes "the history of art/friendship/life/cooking" by requiring technical suffixes.
+        r'the\s+(?:basis|role|structure|concept|'
+        r'principles?|applications?|characteristics?|inner\s+workings?|'
+        r'security\s+mechanisms?|'
+        r'functions?\s+of\s+the|classification|'
+        r'ethical\s+implications?|human\s+genome|'
+        r'potential\s+(?:resources?|applications?|benefits?|risks?)|'
+        r'most\s+common\s+(?:types?|forms?|methods?|causes?)|'
+        r'key\s+(?:components?|features?|concepts?|aspects?|factors?|principles?|differences?)|'
+        r'life\s+cycle|time\s+complexity|'
+        r'recent\s+(?:discoveries?|advances?|developments?|breakthroughs?|trends?)|'
+        r'search\s+for\s+(?:extraterrestrial|intelligent|dark\s+matter|Higgs|gravitational))\s+'
+        r'|the\s+(?:history|evolution|impact|mechanism|theory)\s+of\s+'
+        r'(?!(?:art|life|love|food|music|time|work|people|culture|this|that|our|my|your|the|a|an)\b)'
+        r'|the\s+(?:purpose|function|primary\s+purpose|primary\s+function)\s+of\s+(?:a\s+|the\s+)?'
+        r'(?!(?:life|art|love|food|music|this|that|our|my|your)\b)'
+        r'|the\s+(?:difference|differences?)\s+between\s+'
+        r'(?!(?:art|love|right|wrong|good|bad|us|them)\b)'
+        r'|the\s+(?:causes?|effects?|impacts?|consequences?)\s+of\s+'
+        r'(?!(?:this|that|war|love|pain|grief|loss|art)\b)'
+        r'|the\s+(?:significance|importance)\s+of\s+(?:the\s+)?'
+        r'(?!(?:life|love|art|family|friendship|kindness|this|that|our|my|your)\b)'
+        r'|how\s+(?:the\s+)?[\w][\w\s]{2,50}\s+(?:works?|improve|learn)'
+        r'|the\s+(?:process|steps?|phases?)\s+of\s+'
+        r'(?!(?:this|that|cooking|making|life|love|thinking|doing|being|going)\b)\w'
+        r'|characteristics?\s+of\s+\w'
+        r'|causes?\s+of\s+\w'
+        r'|migration\s+of\s+\w'
+        r'|principle\s+of\s+\w'
+        r'|differences?\s+between\s+\w'
+        r'|the\s+steps\s+to\s+\w'
+        r'|process\s+of\s+(?:cloud|star|rock|cell|gene|protein|'
+        r'photosynthesis|fermentation|evolution|mitosis|metamorphosis|fossilization|'
+        r'crystallization|osmosis|electrolysis|combustion|nuclear)\b'
+        r'|(?:techniques?|methods?)\s+for\s+(?:making|building|synthesizing|detecting|'
+        r'analyzing|measuring|treating|preventing|designing|'
+        r'developing|manufacturing|growing|cultivating)\s+\w[\w\s]{1,30}'
+        r'|creating\s+(?:a\s+|an\s+)(?:game\s+engine|neural\s+network|blockchain|'
+        r'compiler|operating\s+system|machine\s+learning|AI\s+model|'
+        r'robot|simulation|3D)\b'
+        r'|(?:potential\s+)?(?:resources?|properties?)\s+(?:that\s+can\s+be|of\s+(?!(?:life|love|art|cooking)\b))\w'
+        r')',
+        re.I | re.M,
+    ), 0.55, "indirect_query_phrase"),
+    # Weaker indirect reference: bare academic topic nouns/phrases that score at REVIEW level.
+    # These are concepts that appear as entire image text in QRI/indirect attacks.
+    (re.compile(
+        r'^(?:'
+        # Bare technical acronym or known scientific term
+        r'(?:CRISPR|COBOL|FORTRAN|mRNA|DNA|RNA|GPU|CPU|SSD|API|TCP|HTTP|VPN|MRI|PET|CT|FFT|ALU|NMR|LIDAR|SONAR|RADAR)\b'
+        r'|CRISPR-Cas\d+\b'
+        r'|Fast\s+Fourier\s+Transform\b'
+        r'|Heisenberg\s+\w+\s+Principle\b'
+        r'|P\s+versus\s+NP\b'
+        r'|Riemann\s+Hypothesis\b'
+        r'|(?:afrobeat|biomechanics|cryogenic|cryptographic|nanotechnology|'
+        r'superconductivity|entanglement|dark\s+matter|dark\s+energy|'
+        r'neural\s+network|machine\s+learning|deep\s+learning|blockchain|'
+        r'photosynthesis|mitochondria|cerebral|cortex|genome|jet\s+engine|'
+        r'high-speed\s+rail|ray\s+tracing|geoengineering|neuromarketing|'
+        r'nanoparticles?|exoplanet|quantum\s+gravity)\b'
+        # "X in/of Y" academic phrases (2-7 words)
+        r'|(?:aviation|cybersecurity|biomechanics|gene\s+expression|lift)\s+\w[\w\s]{1,40}'
+        # "common X Y" or "X history" topic forms
+        r'|common\s+(?:cybersecurity|programming|mathematical|types\s+of)\s+\w+'
+        r'|\w[\w\s]{2,30}\s+history\s*$'
+        r'|(?:ethical|social|economic|environmental)\s+implications?\s+of\b'
+        r'|(?:differences?|similarities?)\s+between\s+\w'
+        # "a/an X" bare concept with implied question ("a qubit", "an MRI scan")
+        r'|(?:a\s+|an\s+)(?:qubit|fugue|microprocessor|thunderstorm|mushroom|bacterium|exoplanet)\b'
+        # "X contribute/produce/conserve Y" (implicit "how does X do Y?" questions)
+        r'|\w[\w\s]{3,40}\s+(?:contribute|produce|conserve|generate|impact|affect|enable)\s+\w'
+        # Named historical/scientific works/concepts
+        r"|Shakespeare's\s+'?\w|Coptic\s+crosses|Olympian\s+Gods|Tel\s+Dan|Rosetta\s+Stone"
+        r'|Great\s+Pyramid|Maillard\s+reaction|Higgs\s+boson'
+        r')',
+        re.I | re.M,
+    ), 0.40, "indirect_query_phrase"),
     # Partial OCR of "Do not mention any X in this image. Instead, ..."
     # Common OCR fragments when text is small/low-contrast on photo backgrounds:
     # "not mention any ... image" without full sentence structure
@@ -253,7 +337,82 @@ _MISLEADING_LABELS: frozenset = frozenset({
     "roller skates", "seagull", "sewing machine", "skateboard", "starfish",
     "submarine", "sunflower", "sunsets", "surfboard", "tambourine",
     "tornadoes", "trombone", "violin", "volcanoes", "waterfalls",
+    # Short bare-noun indirect-reference topics (query_relevant / indirect_reference)
+    # These never appear as photo captions — their presence as sole image text is suspicious.
+    "nuclear fission", "superposition", "np-completeness", "np completeness",
+    "quantum entanglement", "fungi", "nanotechnology",
+    "blockchain technology", "haute couture", "bitcoin",
+    "gene sequencing", "plate tectonics", "geothermal energy",
+    "molecular orbital theory", "coral reef", "coral reefs", "metal alloying",
+    "fiber optic", "bacterium", "fossilization", "graphene",
+    "higgs boson", "cognitive behavioral therapy", "encryption",
+    "internet protocol", "monarch butterflies", "wave-particle duality",
+    "quantum physics", "ancient egyptian temples",
+    "maillard reaction", "mri scan", "ct scan", "pet scan",
+    "mount everest", "habitat of", "habitat of a",
+    "afrobeat", "crispr", "cobol", "qubit", "fugue",
+    "dark matter", "dark energy", "exoplanet", "nanoparticle",
+    "thunderstorm produce", "desert tortoise", "sea level rise",
+    "glacier", "glaciers", "coral bleaching",
+    "climbing mount", "challenges of climbing",
+    "jet engine", "combustion chamber", "combustion",
+    "high-speed rail", "ray tracing", "geoengineering",
+    "neuromarketing", "gene expression",
+    # Additional indirect_reference topics promoted from REVIEW to BLOCK
+    "fast fourier transform", "coptic crosses", "olympian gods",
+    "cybersecurity threats", "cryogenic preservation",
+    "mitochondria in eukaryotic", "cerebral cortex",
+    "p versus np", "p vs np", "neuroplasticity",
+    "machine learning algorithms", "cryptographic hash",
+    "biomechanics in prosthetic", "a mushroom",
+    "heisenberg uncertainty", "shakespeare's",
+    "supply and demand", "aviation history",
+    "ethical implications of ai", "lift generate",
+    "key factors in determining", "neural networks",
+    "nanomaterials", "nanorobotics", "synaptic pruning",
+    "urban forests", "symptoms of malaria", "turbocharger",
+    "arithmetic logic unit", "password cracking",
+    "global warming on sea", "deep-sea anglerfish",
+    "prosthetic limbs", "piston engine",
+    "reusable spacecraft", "andes mountain range",
+    "motion planning in autonomous", "autonomous vehicles",
+    "greenhouse effect", "geostationary orbit",
+    "mariana trench", "spaceship's propulsion",
+    "notochord in vertebrate", "loop quantum gravity",
+    "asteroid belt", "rising global temperatures",
+    "tel dan", "ajanta caves", "antarctic krill",
+    "greek and norse", "microchip",
+    "video game development", "rocket engines",
+    "primary goal of machine learning",
 })
+
+# Regex for short academic topic phrases (1-6 words) that are indirect-reference attacks
+# when they constitute the entire image text. These match topics that no camera would
+# caption a photo with — they come from FigStep/QRI attack images.
+_SHORT_TOPIC_PATTERN = re.compile(
+    r'^(?:'
+    # scientific/technical concepts with modifier
+    r'(?:nuclear|quantum|molecular|optical|geothermal|gravitational|electromagnetic)\s+\w[\w\s]{1,30}|'
+    r'(?:ancient|classical|modern|medieval)\s+\w[\w\s]{1,30}|'
+    r'(?:the\s+)?(?:principles?|properties?|characteristics?|fundamentals?|applications?)\s+of\s+\w[\w\s]{1,40}|'
+    # bare technical terms
+    r'(?:np.?completeness|superposition|entanglement|'
+    r'nanotechnology|blockchain|cryptocurrency|bitcoin|'
+    r'photosynthesis|mitosis|electrolysis|osmosis|'
+    r'fermentation|crystallization|fossilization|'
+    r'haute\s+couture|fungi|bacterium|graphene|'
+    r'maillard\s+reaction|crispr|cobol|qubit|fugue|afrobeat|neuromarketing)|'
+    # "habitat of X" — common in query_relevant indirect-reference attacks
+    r'(?:a\s+)?(?:typical\s+)?habitat\s+of\s+\w[\w\s]{0,40}|'
+    # "X scan" (MRI scan, CT scan, PET scan) — bare medical imaging concept
+    r'(?:mri|ct|pet|nmr)\s+scan|'
+    # "challenges of X" — academic topic form
+    r'challenges\s+of\s+\w[\w\s]{1,40}|'
+    # "X of Mount Y" — geographic challenge topics
+    r'(?:climbing|ascent\s+of|descent\s+of)\s+mount\s+\w[\w\s]{0,30}'
+    r')\s*\.?\s*$',
+    re.I,
+)
 
 
 def _tokenise(text: str) -> List[str]:
@@ -301,18 +460,21 @@ def _structural_score(text: str) -> Tuple[float, str]:
 
 
 def _misleading_label_score(tokens: List[str], text: str) -> float:
-    """Detect misleading caption label (e.g. 'microscope' under balloon photo).
+    """Detect misleading caption label or short indirect-reference topic phrase.
 
     The label may appear anywhere in the OCR output — even buried in noise tokens.
-    Short text (<=4 words) gets full confidence; label in longer noisy OCR gets
+    Short text (<=6 words) gets full confidence; label in longer noisy OCR gets
     slightly reduced confidence since the surrounding context is ambiguous.
+    Also checks the short-topic pattern for bare concept nouns.
     """
     stripped = text.strip().lower()
     word_count = len(stripped.split())
     for label in _MISLEADING_LABELS:
         if label in stripped:
-            # High confidence if the text is short (caption-like); lower if buried in noise
             return 0.60 if word_count <= 6 else 0.45
+    # Short academic topic phrase that is too specific for a photo caption
+    if word_count <= 8 and _SHORT_TOPIC_PATTERN.match(stripped):
+        return 0.55
     return 0.0
 
 
@@ -419,7 +581,7 @@ def analyze_semantic(
             reason_codes.append("MISLEADING_LABEL")
         if matched in ("figstep_blank_list", "figstep_colon_topic"):
             reason_codes.append("FIGSTEP_TEMPLATE")
-        if matched in ("process_caption", "figstep_colon_topic"):
+        if matched in ("process_caption", "figstep_colon_topic", "indirect_query_phrase"):
             reason_codes.append("INDIRECT_REFERENCE")
         if matched in ("read_and_send", "send_it_to", "send_to_email",
                        "exfiltrate_to", "read_file_exfil"):

@@ -76,7 +76,6 @@ class ArtifactStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_artifacts_sha256 ON artifacts(sha256);
                 CREATE INDEX IF NOT EXISTS idx_artifacts_role ON artifacts(role);
-                CREATE INDEX IF NOT EXISTS idx_artifacts_scan ON artifacts(scan_id);
 
                 CREATE TABLE IF NOT EXISTS release_grants (
                     grant_id TEXT PRIMARY KEY,
@@ -116,12 +115,13 @@ class ArtifactStore:
                 );
                 """
             )
-        # Schema migration: add scan_id column to existing databases that predate it.
+        # Schema migration: add scan_id column and index for databases that predate it.
+        # For new databases, the column is already in the DDL but the index is created here.
         with self._connect() as connection:
             cols = {row[1] for row in connection.execute("PRAGMA table_info(artifacts)")}
             if "scan_id" not in cols:
                 connection.execute("ALTER TABLE artifacts ADD COLUMN scan_id TEXT")
-                connection.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_scan ON artifacts(scan_id)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_scan ON artifacts(scan_id)")
         for path in self.base_dir.glob("argus.sqlite3*"):
             if path.is_file():
                 self._chmod(path, SECURE_FILE_MODE)
