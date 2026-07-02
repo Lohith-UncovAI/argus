@@ -470,8 +470,17 @@ def _misleading_label_score(tokens: List[str], text: str) -> float:
     stripped = text.strip().lower()
     word_count = len(stripped.split())
     for label in _MISLEADING_LABELS:
-        if label in stripped:
-            return 0.60 if word_count <= 6 else 0.45
+        if label not in stripped:
+            continue
+        label_wc = len(label.split())
+        # Classify as high-confidence if the label represents ≥50% of total words
+        # OR if the total text is short enough (≤10 words) for the label to be the
+        # primary content (surrounded only by OCR noise like digits, symbols).
+        # At >10 words the text is likely a genuine descriptive sentence; use REVIEW.
+        label_ratio = label_wc / max(word_count, 1)
+        if label_ratio >= 0.5 or word_count <= 10:
+            return 0.60
+        return 0.45
     # Short academic topic phrase that is too specific for a photo caption
     if word_count <= 8 and _SHORT_TOPIC_PATTERN.match(stripped):
         return 0.55
