@@ -23,3 +23,6 @@ limits:
   parser_timeout_seconds: 10
   detector_timeout_seconds: 30
   full_scan_timeout_seconds: 120
+yara:
+  enabled: true
+  rule_bundle_path: yara/default.yar

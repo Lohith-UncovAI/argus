@@ -31,6 +31,7 @@ from argus_img.core.config import load_config
 from argus_img.core.detector_registry import load_detector_registry
 from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction, ScanMode, UseProfile
 from argus_img.core.models import DetectorExecution, ScanRequest
+from argus_img.detectors.steganography.zsteg import zsteg_status
 from argus_img.orchestration.mode_plan import DEEP_PLAN, FAST_PLAN, FORENSIC_PLAN, plan_for_mode
 from argus_img.orchestration.pipeline import scan_file
 from argus_img.policy.coverage import mandatory_coverage_decision
@@ -81,6 +82,24 @@ def test_fast_plan_includes_channel_transforms():
 def test_forensic_plan_includes_optional_forensic_detectors():
     forensic_only = {"detector:zsteg", "detector:c2pa", "detector:adversarial-stability"}
     assert forensic_only <= FORENSIC_PLAN.active_detectors
+
+
+def test_zsteg_status_reports_installed_tool(monkeypatch):
+    monkeypatch.setattr("argus_img.detectors.steganography.zsteg.shutil.which", lambda _: "/usr/local/bin/zsteg")
+
+    status = zsteg_status()
+
+    assert status.status == EpistemicState.CONFIRMED
+    assert status.reason == "/usr/local/bin/zsteg"
+
+
+def test_zsteg_status_reports_missing_tool(monkeypatch):
+    monkeypatch.setattr("argus_img.detectors.steganography.zsteg.shutil.which", lambda _: None)
+
+    status = zsteg_status()
+
+    assert status.status == EpistemicState.UNSUPPORTED
+    assert status.reason == "tool_not_installed"
 
 
 # ---------------------------------------------------------------------------

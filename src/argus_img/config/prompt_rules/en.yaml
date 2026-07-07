@@ -5,6 +5,8 @@ rules:
     languages: [en]
     patterns:
       - '\bignore\s+(all\s+)?(previous|prior|above)\s+instructions?\b'
+      - '\bforget\s+(all\s+)?(earlier|previous|prior)\s+(rules|instructions?|context)\b'
+      - '\bdisregard\s+(all\s+)?(previous|prior|above)\s+(context|instructions?)\b'
       - '\boverride\s+(the\s+)?(system|developer)\s+(prompt|message)\b'
   - id: PI-SYSTEM-PROMPT-REQUEST-EN-001
     category: system_prompt_request
@@ -19,6 +21,8 @@ rules:
     languages: [en]
     patterns:
       - '\b(call|use|invoke)\s+(the\s+)?tool\b'
+      - '\bcall\s+(the\s+)?(simulated\s+)?tool\s+[a-zA-Z_][\w.-]*\b'
+      - '\b(call|invoke)\s+[a-zA-Z_][\w.-]*\s+(tool|function|command)\b'
       - '\b(run|execute)\s+(this\s+)?(command|shell|python)\b'
   - id: PI-SECRET-REQUEST-EN-001
     category: credential_request
@@ -26,4 +30,4 @@ rules:
     languages: [en]
     patterns:
       - '\b(send|reveal|print|upload)\s+(the\s+)?(api\s*key|token|password|secret|seed phrase)\b'
-
+      - '\b(output|print|return|emit)\s+ARGUS[-_\s]*CANARY\b'

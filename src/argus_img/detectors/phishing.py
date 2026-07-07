@@ -13,10 +13,12 @@ _INDICATOR_RULES: List[Tuple[str, List[str], List[Tuple[str, str]]]] = [
     ("password request", [
         "enter your password", "password required", "verify password",
         "verify your identity", "verify your account",
+        "submit the token", "submit your token", "enter your token",
     ], []),
     ("credential harvesting", [
         "confirm your card", "card details", "card number", "cvv",
-        "sign in to", "log in to",
+        "sign in to", "log in to", "open https://login", "open http://login",
+        "submit the fake token",
     ], []),
     ("seed phrase request", [
         "seed phrase", "recovery phrase", "24-word", "12-word",
@@ -60,6 +62,12 @@ def analyze_phishing(
             name for name, phrases, pairs in _INDICATOR_RULES
             if _matches(lower, phrases, pairs)
         ]
+        if (
+            ("login." in lower or "login/" in lower or "sign in" in lower or "log in" in lower)
+            and any(term in lower for term in ("token", "password", "credential", "otp", "code"))
+        ):
+            matched.append("credential harvesting")
+        matched = sorted(set(matched))
         if not matched:
             continue
         findings.append(

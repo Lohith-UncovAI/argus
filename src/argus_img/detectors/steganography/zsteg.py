@@ -5,9 +5,9 @@ from argus_img.core.models import ModuleStatus
 
 
 def zsteg_status() -> ModuleStatus:
+    path = shutil.which("zsteg")
     return ModuleStatus(
         name="zsteg",
-        status=EpistemicState.NOT_TESTED if shutil.which("zsteg") else EpistemicState.UNSUPPORTED,
-        reason=None if shutil.which("zsteg") else "tool_not_installed",
+        status=EpistemicState.CONFIRMED if path else EpistemicState.UNSUPPORTED,
+        reason=path or "tool_not_installed",
     )
-

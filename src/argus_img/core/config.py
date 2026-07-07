@@ -130,6 +130,7 @@ def load_yaml_config(relative: Sequence[str], config_root: Optional[Path] = None
 
 
 def load_config(path: Optional[Path] = None, config_root: Optional[Path] = None) -> AppConfig:
+    resolved_root = resolve_config_root(config_root)
     data: Dict[str, Any] = load_yaml_config(("default.yaml",), config_root)
     if path is not None:
         with path.open("r", encoding="utf-8") as handle:
@@ -144,7 +145,12 @@ def load_config(path: Optional[Path] = None, config_root: Optional[Path] = None)
     if os.environ.get("ARGUS_STORAGE_MAX_BYTES"):
         data.setdefault("storage", {})["maximum_total_store_bytes"] = int(os.environ["ARGUS_STORAGE_MAX_BYTES"])
     try:
-        return AppConfig.model_validate(data)
+        config = AppConfig.model_validate(data)
+        if config.yara.rule_bundle_path:
+            rule_path = Path(config.yara.rule_bundle_path)
+            if not rule_path.is_absolute() and isinstance(resolved_root, Path):
+                config.yara.rule_bundle_path = str((resolved_root / rule_path).resolve())
+        return config
     except ValidationError as exc:
         raise ConfigurationError("invalid configuration: %s" % exc) from exc
 

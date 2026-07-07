@@ -6,7 +6,7 @@ from argus_img.core.models import DetectorFinding, TextObservation
 
 def analyze_visible_watermarks(texts: List[TextObservation], scan_id: str) -> List[DetectorFinding]:
     findings: List[DetectorFinding] = []
-    indicators = ["watermark", "stock", "shutterstock", "alamy", "getty images", "sample"]
+    indicators = ["watermark", "stock", "shutterstock", "alamy", "getty images"]
     for obs in texts:
         lower = obs.normalized_text.lower()
         matched = [term for term in indicators if term in lower]
@@ -30,4 +30,3 @@ def analyze_visible_watermarks(texts: List[TextObservation], scan_id: str) -> Li
             )
         )
     return findings
-

@@ -32,6 +32,15 @@ def _luhn(candidate: str) -> bool:
     return checksum % 10 == 0
 
 
+def _phone_like(candidate: str) -> bool:
+    digits = [ch for ch in candidate if ch.isdigit()]
+    if len(digits) < 8:
+        return False
+    if re.fullmatch(r"(?:\d+\.\s*){2,}\d*\.?", candidate.strip()):
+        return False
+    return True
+
+
 def analyze_privacy(texts: List[TextObservation], scan_id: str, include_raw_text: bool = False) -> List[DetectorFinding]:
     findings: List[DetectorFinding] = []
     checks = [
@@ -46,7 +55,10 @@ def analyze_privacy(texts: List[TextObservation], scan_id: str, include_raw_text
     for obs in texts:
         text = obs.normalized_text
         for finding_type, pattern, code in checks:
-            if not pattern.search(text):
+            match = pattern.search(text)
+            if not match:
+                continue
+            if finding_type == "telephone_number" and not _phone_like(match.group(0)):
                 continue
             findings.append(
                 DetectorFinding(
@@ -85,4 +97,3 @@ def analyze_privacy(texts: List[TextObservation], scan_id: str, include_raw_text
                     )
                 )
     return findings
-

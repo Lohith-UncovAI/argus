@@ -52,6 +52,7 @@ argus_img = [
   "config/*.yaml",
   "config/policies/*.yaml",
   "config/prompt_rules/*.yaml",
+  "config/yara/*.yar",
 ]
 
 [tool.pytest.ini_options]

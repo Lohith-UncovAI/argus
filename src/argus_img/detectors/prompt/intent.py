@@ -6,7 +6,9 @@ def classify_text_context(text: str) -> str:
     lower = text.lower()
     active_command = re.search(
         r"\b(ignore\s+(all\s+)?(previous|prior|above)\s+instructions?|override\s+(the\s+)?(system|developer)|"
-        r"(call|use|invoke)\s+(the\s+)?tool|run\s+(this\s+)?(command|shell|python)|execute\s+(this\s+)?command)\b",
+        r"disregard\s+(all\s+)?(previous|prior|above)\s+(context|instructions?)|"
+        r"(call|use|invoke)\s+(the\s+)?(simulated\s+)?tool|run\s+(this\s+)?(command|shell|python)|execute\s+(this\s+)?command|"
+        r"(output|print|return|emit)\s+argus[-_\s]*canary)\b",
         lower,
     )
     if re.search(r"['\"`].{0,80}(ignore|override|system prompt|call tool|run command|execute).{0,80}['\"`]", lower):
@@ -35,9 +37,9 @@ def classify_text_context(text: str) -> str:
 def extract_intent(text: str) -> Dict[str, object]:
     lower = text.lower()
     requested_action = None
-    if any(term in lower for term in ["call tool", "use tool", "execute", "run command", "open file"]):
+    if any(term in lower for term in ["call tool", "use tool", "simulated tool", "execute", "run command", "open file", "send_email"]):
         requested_action = "tool_call"
-    elif any(term in lower for term in ["send", "exfiltrate", "upload", "post to"]):
+    elif any(term in lower for term in ["send", "exfiltrate", "upload", "post to", "argus-canary", "argus_canary"]):
         requested_action = "data_exfiltration"
 
     # Credential request: broad — covers direct naming AND extraction verbs near secret nouns.
@@ -54,7 +56,7 @@ def extract_intent(text: str) -> Dict[str, object]:
 
     # Authority override: covers instruction suppression and redirect patterns too.
     authority_override = bool(re.search(
-        r"\b(ignore\s+(previous|prior|all)\s+instructions?|override\s+(system|developer)|"
+        r"\b(ignore\s+(previous|prior|all)\s+instructions?|disregard\s+(previous|prior|all)\s+(context|instructions?)|override\s+(system|developer)|"
         r"do\s+not\s+mention\b|instead\s*(,\s*)?(print|say|output|reveal|mention|report)|"
         r"forget\s+(previous|prior|all)|disregard|reset\s+(your\s+)?instructions?)\b",
         lower,

@@ -38,6 +38,13 @@ rules:
       state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]
     action: REVIEW
     summary: Embedded or appended payload evidence needs review.
+  - id: review-phishing-indicators
+    priority: 645
+    when:
+      category: phishing
+      state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]
+    action: REVIEW
+    summary: Deceptive login, credential, or payment indicators need review.
   - id: review-steganography
     priority: 640
     when:

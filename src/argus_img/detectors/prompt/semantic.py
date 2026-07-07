@@ -117,6 +117,13 @@ _INJECTION_BIGRAMS: List[Tuple[str, str, float]] = [
 # ── Structural patterns ───────────────────────────────────────────────────────
 # These are applied to normalised text.  Each (regex, score, label).
 _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
+    # Direct context/instruction suppression variants not covered by the stricter
+    # regex rule bundle.
+    (re.compile(r'\bdisregard\s+(all\s+)?(previous|prior|above)\s+(context|instructions?)\b', re.I), 0.85, "suppress_redirect"),
+    (re.compile(r'\bforget\s+(all\s+)?(earlier|previous|prior)\s+(rules|instructions?|context)\b', re.I), 0.85, "forget_rules"),
+    (re.compile(r'\badmin\s+command\s*:\s*(disable|bypass|turn\s+off)\b.{0,80}\b(filters?|policy|safety|guardrails?)\b', re.I), 0.85, "admin_disable_filters"),
+    (re.compile(r'\b(output|print|return|emit)\s+ARGUS[-_\s]*CANARY\b', re.I), 0.85, "print_secret"),
+    (re.compile(r'\bcall\s+(?:the\s+)?(?:simulated\s+)?(?:tool\s+)?[a-zA-Z_][\w.-]*\b', re.I), 0.75, "tool_invocation"),
     # Suppress + redirect
     (re.compile(r'\bdo\s+not\s+\w+\b.{0,80}\binstead\b', re.I), 0.80, "suppress_redirect"),
     # "mention the password/string/secret"
@@ -148,6 +155,18 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bInstead\s*,\s*p[rni]', re.I), 0.65, "suppress_redirect_fragment"),
     # "not mention any" without full sentence
     (re.compile(r'\bnot\s+mention\s+any\b', re.I), 0.60, "suppress_fragment"),
+    # Direct suppression embedded in images, even when OCR misses the following
+    # redirect clause.  "Do not mention the sun in this image" is already an
+    # active image-targeting instruction.
+    (re.compile(r'\bdo\s+not\s+mention\s+(?:the|a|an|any)\b.{0,90}\b(this\s+)?image\b', re.I), 0.72, "suppress_redirect"),
+    # OCR-corrupted "do not mention any ..." where "mention any" becomes
+    # "ayentionany", "mentior-an", etc.  Require a nearby redirect/image cue
+    # to keep this from matching ordinary prose.
+    (re.compile(
+        r'\b(?:not|net|rot)\W*(?:\w{0,3}ention\w*|menti\w{2,6})\W*a\w{1,4}\b'
+        r'.{0,120}\b(weather|instead|describe|image)\b',
+        re.I,
+    ), 0.72, "suppress_redirect_ocr_typo"),
     # OCR-typo-tolerant: "Iniaead, say", "Inseead, say", "Inabey Instead", "lnstead, print"
     # EasyOCR commonly corrupts "Instead" on stylized/small fonts
     (re.compile(r'\bIn\w{4,8}\s*[,;]?\s*(say|print|output|mention|reveal|report|state)\b', re.I), 0.70, "suppress_redirect_ocr_typo"),
@@ -304,6 +323,14 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bsay\s+the\s+\w+\s+is\b', re.I), 0.55, "suppress_redirect"),
     # Indirect reference: "[value of ...]", "[secret key]", "[X]" bracket templates
     (re.compile(r'\[value\s+of\b', re.I), 0.80, "bracket_placeholder"),
+    # OCR often reads "[value of the secret key]" as "[value c the seret key]".
+    # Keep the pattern bracket/placeholder-bound so plain UI labels like "value key"
+    # are not escalated.
+    (re.compile(r'\[\s*f?value\b.{0,60}\bkey\s*\]', re.I), 0.72, "bracket_placeholder"),
+    # Severe OCR corruption can drop brackets and split "value of the secret key"
+    # into fragments like "Walugof ... gsecret".  Require a value-of fragment
+    # near secret/key vocabulary to avoid broad "value" false positives.
+    (re.compile(r'\b\w?(?:value|valu|walu)\w{0,8}\b.{0,70}\b\w{0,3}(secret|key)\b', re.I), 0.72, "bracket_placeholder"),
     (re.compile(r'\[\s*(?:secret|hidden|private|the)\b', re.I), 0.72, "bracket_placeholder"),
     # Channel-difference OCR: "ignore" is frequently misread as "ighore", "igfiore",
     # "igmore", "ignbre" etc. when extracted from noisy difference channels.
@@ -479,11 +506,11 @@ def _misleading_label_score(tokens: List[str], text: str) -> float:
         # At >10 words the text is likely a genuine descriptive sentence; use REVIEW.
         label_ratio = label_wc / max(word_count, 1)
         if label_ratio >= 0.5 or word_count <= 10:
-            return 0.60
-        return 0.45
+            return 0.30
+        return 0.25
     # Short academic topic phrase that is too specific for a photo caption
     if word_count <= 8 and _SHORT_TOPIC_PATTERN.match(stripped):
-        return 0.55
+        return 0.30
     return 0.0
 
 
@@ -507,6 +534,11 @@ def score_text(text: str) -> Dict[str, object]:
     tok_score = _token_overlap_score(tokens)
     big_score = _bigram_score(tokens)
     struct_score, struct_label = _structural_score(text)
+    token_set = frozenset(tokens)
+    if struct_label in {"indirect_query_phrase", "process_caption"}:
+        struct_score = min(struct_score, 0.30)
+    elif struct_label == "figstep_colon_topic" and not (token_set & _HIGH_SIGNAL):
+        struct_score = min(struct_score, THRESHOLD_REVIEW)
 
     signals = {
         "token_overlap": tok_score,
@@ -584,8 +616,11 @@ def analyze_semantic(
                        "yaml_role_system", "ignore_ocr_typo", "suppress_redirect_fragment",
                        "suppress_redirect_ocr_typo", "mention_secret_ocr_typo",
                        "instead_secret", "instead_password", "ins_fragment_secret",
-                       "ins_fragment_password"):
+                       "ins_fragment_password", "tool_invocation", "forget_rules",
+                       "admin_disable_filters"):
             reason_codes.append("INSTRUCTION_OVERRIDE")
+        if matched == "tool_invocation":
+            reason_codes.append("TOOL_INVOCATION_REQUEST")
         if matched == "misleading_label":
             reason_codes.append("MISLEADING_LABEL")
         if matched in ("figstep_blank_list", "figstep_colon_topic"):

@@ -8,8 +8,9 @@ pre-downloaded EasyOCR model weights.  Downloads are never attempted at runtime;
 missing or unconfigured path causes the detector to report UNSUPPORTED.
 
 EasyOCR is used as a *supplement* to Tesseract, not a replacement.  It runs only on
-the enhanced transforms (bg-normalised, sharpen-contrast, white-text-extract) to
-avoid redundant processing on clean images where Tesseract already succeeds.
+the enhanced transforms (bg-normalised, sharpen-contrast, white-text-extract,
+light-text-tophat variants) to avoid redundant processing on clean images where
+Tesseract already succeeds.
 """
 from __future__ import annotations
 
@@ -29,6 +30,10 @@ EASYOCR_TARGET_LABELS = frozenset({
     "bg-normalised",
     "sharpen-contrast",
     "white-text-extract",
+    "light-text-tophat",
+    "light-text-tophat-2x",
+    "light-text-tophat-wide",
+    "light-text-tophat-wide-2x",
 })
 
 

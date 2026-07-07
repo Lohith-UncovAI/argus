@@ -28,12 +28,21 @@ def _merge_support(target: DetectorFinding, source: DetectorFinding) -> None:
         target.evidence["transformations"] = sorted(existing_transformations)
 
 
+def _support_key(finding: DetectorFinding):
+    if finding.category == "prompt_injection":
+        return "prompt-class"
+    if finding.category in {"phishing", "watermarks"}:
+        indicators = tuple(sorted(finding.evidence.get("indicators", [])))
+        if indicators:
+            return (finding.category, finding.type, indicators)
+    return finding.evidence.get("text_sha256")
+
+
 def deduplicate_findings(findings: List[DetectorFinding]) -> List[DetectorFinding]:
     seen = {}
     result = []
     for finding in findings:
-        text_hash = finding.evidence.get("text_sha256")
-        support_key = "prompt-class" if finding.category == "prompt_injection" else text_hash
+        support_key = _support_key(finding)
         key = (
             finding.category,
             finding.type,

@@ -11,6 +11,10 @@ from argus_img.core.models import Artifact, ArtifactTransformation
 from argus_img.decoding.pillow_decoder import encode_png
 
 
+def _upscale_for_ocr(image: Image.Image, factor: int = 2) -> Image.Image:
+    return image.resize((image.width * factor, image.height * factor), Image.Resampling.LANCZOS)
+
+
 def _otsu_threshold(gray: Image.Image) -> Image.Image:
     histogram = gray.histogram()
     total = sum(histogram)
@@ -118,6 +122,45 @@ def generate_fast_transformations(
         store_transformed("white-text-extract", white_extract,
                           {"method": "invert_threshold", "threshold": 60})
 
+    # Morphological top-hat extraction isolates light text strokes that are only
+    # slightly brighter than a photo background.  This is deliberately different
+    # from white-text-extract: it subtracts a local background estimate before
+    # thresholding, so faint overlays on beaches, fur, fabric, and screens survive.
+    if any(_active(label) for label in (
+        "light-text-tophat",
+        "light-text-tophat-2x",
+        "light-text-tophat-wide",
+        "light-text-tophat-wide-2x",
+    )):
+        import numpy as np
+        import cv2
+
+        gray_arr = np.array(gray)
+
+        def _light_text_tophat(kernel_size: int, gain: float) -> Image.Image:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+            extracted = cv2.morphologyEx(gray_arr, cv2.MORPH_TOPHAT, kernel)
+            extracted = np.clip(extracted.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+            _, binary = cv2.threshold(extracted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Tesseract expects dark glyphs on a light background.
+            return Image.fromarray(255 - binary)
+
+        if _active("light-text-tophat") or _active("light-text-tophat-2x"):
+            narrow = _light_text_tophat(kernel_size=9, gain=3.0)
+            store_transformed("light-text-tophat", narrow,
+                              {"method": "morphological_tophat", "kernel": 9, "gain": 3.0})
+            if _active("light-text-tophat-2x"):
+                store_transformed("light-text-tophat-2x", _upscale_for_ocr(narrow),
+                                  {"method": "morphological_tophat", "kernel": 9, "gain": 3.0, "upscale": 2})
+
+        if _active("light-text-tophat-wide") or _active("light-text-tophat-wide-2x"):
+            wide = _light_text_tophat(kernel_size=15, gain=1.0)
+            store_transformed("light-text-tophat-wide", wide,
+                              {"method": "morphological_tophat", "kernel": 15, "gain": 1.0})
+            if _active("light-text-tophat-wide-2x"):
+                store_transformed("light-text-tophat-wide-2x", _upscale_for_ocr(wide),
+                                  {"method": "morphological_tophat", "kernel": 15, "gain": 1.0, "upscale": 2})
+
     # High-contrast grayscale: divides each pixel by a blurred background estimate
     # (background normalisation / unsharp divide).  Recovers low-contrast text
     # overlaid on bright or textured backgrounds without over-darkening the image.
@@ -218,10 +261,8 @@ def generate_fast_transformations(
                 if not _active(label_suffix):
                     continue
                 binary = ((diff > mean + sigma * std) * 255).astype(np.uint8)
-                diff_img = Image.fromarray(binary, "L")
-                diff_img = diff_img.resize(
-                    (diff_img.width * 2, diff_img.height * 2), Image.Resampling.LANCZOS
-                )
+                diff_img = Image.fromarray(binary)
+                diff_img = _upscale_for_ocr(diff_img)
                 store_transformed(label_suffix, diff_img,
                                   {"method": "channel_difference_threshold", "sigma": sigma,
                                    "upscale": 2,

@@ -40,7 +40,13 @@ def analyze_with_tesseract(
     # to the default PSM 6 pass.  PSM 11 finds text anywhere without assuming a block
     # layout, which is critical for overlaid captions and partial OCR on photo backgrounds.
     _SPARSE_TEXT_LABELS = frozenset({
-        "bg-normalised", "sharpen-contrast", "white-text-extract",
+        "bg-normalised",
+        "sharpen-contrast",
+        "white-text-extract",
+        "light-text-tophat",
+        "light-text-tophat-2x",
+        "light-text-tophat-wide",
+        "light-text-tophat-wide-2x",
     })
 
     observations: List[TextObservation] = []

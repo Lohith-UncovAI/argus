@@ -11,4 +11,10 @@ rules:
     languages: [generic]
     patterns:
       - '\b(jailbreak|bypass|disable)\b.{0,80}\b(policy|safety|guardrails?)\b'
-
+      - '\badmin\s+command\s*:\s*(disable|bypass|turn\s+off)\b.{0,80}\b(filters?|policy|safety|guardrails?)\b'
+  - id: PI-GENERIC-CANARY-001
+    category: data_exfiltration
+    severity: high
+    languages: [generic]
+    patterns:
+      - '\b(output|print|return|emit)\s+ARGUS[-_\s]*CANARY\b'
