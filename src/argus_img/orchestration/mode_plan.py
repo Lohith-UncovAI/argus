@@ -65,6 +65,13 @@ FAST_PLAN = ModePlan(
         "blue-channel",
         "alpha-channel",
         "alpha-amplified",
+        "ocr-small-3x",
+        "bottom-region",
+        "bottom-region-2x",
+        "bottom-region-3x",
+        "bottom-region-contrast",
+        "bottom-region-contrast-2x",
+        "bottom-region-contrast-3x",
         "white-text-extract",
         "light-text-tophat",
         "light-text-tophat-2x",
@@ -87,7 +94,7 @@ FAST_PLAN = ModePlan(
     description=(
         "Fast mode: all mandatory detectors, canonical representations, "
         "grayscale and RGBA channel transforms, frame and thumbnail extraction.  "
-        "Skips Otsu threshold, inverted grayscale, bitplanes, and 2x enlargement."
+        "Skips Otsu threshold, inverted grayscale, bitplanes, and general 2x enlargement."
     ),
 )
 

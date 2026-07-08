@@ -12,6 +12,11 @@ rules:
     when: {category: prompt_injection, state: POSSIBLE}
     action: REVIEW
     summary: Possible prompt-injection text needs review before OCR use.
+  - id: ocr-review-phishing
+    priority: 675
+    when: {category: phishing, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    action: REVIEW
+    summary: Phishing or deceptive login indicators need review before OCR use.
   - id: ocr-review-privacy
     priority: 650
     when: {category: privacy, state: CONFIRMED}

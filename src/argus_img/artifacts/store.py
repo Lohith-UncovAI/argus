@@ -682,14 +682,60 @@ class ArtifactStore:
                         pass
         return removed
 
-    def enforce_storage_quota(self, max_total_bytes: int) -> None:
+    @staticmethod
+    def _tree_bytes(root: Path) -> int:
+        if not root.exists():
+            return 0
         total = 0
-        for root in [self.quarantine_dir, self.artifacts_dir, self.forensic_dir]:
-            if root.exists():
-                total += sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-        if self.db_path.exists():
-            total += self.db_path.stat().st_size
-        if total > max_total_bytes:
+        for path in root.rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def _database_bytes(self) -> int:
+        total = 0
+        for path in self.base_dir.glob("argus.sqlite3*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def storage_status(self, quota_bytes: Optional[int] = None) -> Dict[str, Any]:
+        """Return quota-scoped store usage without deleting or mutating artifacts."""
+        areas = {
+            "quarantine_bytes": self._tree_bytes(self.quarantine_dir),
+            "artifacts_bytes": self._tree_bytes(self.artifacts_dir),
+            "forensic_bytes": self._tree_bytes(self.forensic_dir),
+            "db_bytes": self._database_bytes(),
+        }
+        total = sum(areas.values())
+        remaining = None if quota_bytes is None else quota_bytes - total
+        return {
+            "data_dir": str(self.base_dir),
+            "total_bytes": total,
+            "quota_bytes": quota_bytes,
+            "remaining_bytes": remaining,
+            "over_quota": False if quota_bytes is None else total > quota_bytes,
+            "areas": areas,
+        }
+
+    def require_storage_headroom(self, incoming_bytes: int, max_total_bytes: int) -> None:
+        """Fail before quarantining a new input when the store lacks headroom."""
+        status = self.storage_status(max_total_bytes)
+        remaining = status["remaining_bytes"]
+        if remaining is not None and remaining < max(0, incoming_bytes):
+            raise ArtifactAccessDenied(
+                "artifact store quota would be exceeded "
+                "(remaining_bytes=%d, incoming_bytes=%d)" % (remaining, incoming_bytes)
+            )
+
+    def enforce_storage_quota(self, max_total_bytes: int) -> None:
+        if self.storage_status(max_total_bytes)["over_quota"]:
             raise ArtifactAccessDenied("artifact store quota exceeded")
 
     def cleanup_job_dirs(self, older_than_seconds: float = 0.0) -> List[str]:

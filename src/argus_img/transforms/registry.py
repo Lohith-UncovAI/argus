@@ -10,9 +10,30 @@ from argus_img.core.budget import ResourceBudget
 from argus_img.core.models import Artifact, ArtifactTransformation
 from argus_img.decoding.pillow_decoder import encode_png
 
+_MAX_3X_OCR_SOURCE_PIXELS = 400_000
+
 
 def _upscale_for_ocr(image: Image.Image, factor: int = 2) -> Image.Image:
     return image.resize((image.width * factor, image.height * factor), Image.Resampling.LANCZOS)
+
+
+def _fits_3x_ocr_bound(image: Image.Image) -> bool:
+    return image.width * image.height <= _MAX_3X_OCR_SOURCE_PIXELS
+
+
+def _bottom_region(image: Image.Image, ratio: float = 0.45) -> Image.Image:
+    y0 = max(0, int(image.height * (1.0 - ratio)))
+    return image.crop((0, y0, image.width, image.height))
+
+
+def _footer_contrast(image: Image.Image) -> Image.Image:
+    from PIL import ImageEnhance, ImageFilter
+
+    gray = ImageOps.grayscale(image)
+    boosted = ImageOps.autocontrast(gray, cutoff=1)
+    boosted = ImageEnhance.Contrast(boosted).enhance(4.0)
+    boosted = ImageEnhance.Sharpness(boosted).enhance(2.0)
+    return boosted.filter(ImageFilter.SHARPEN)
 
 
 def _otsu_threshold(gray: Image.Image) -> Image.Image:
@@ -112,6 +133,48 @@ def generate_fast_transformations(
     if _active("2x-enlargement"):
         enlarged = image.resize((image.width * 2, image.height * 2), Image.Resampling.BICUBIC)
         store_transformed("2x-enlargement", enlarged)
+
+    # Bounded whole-image 3x OCR upscale for tiny prompt text.  The source pixel
+    # bound keeps this out of large images where the transform would dominate the
+    # per-scan pixel/artifact budget.
+    if _active("ocr-small-3x") and _fits_3x_ocr_bound(image):
+        store_transformed("ocr-small-3x", _upscale_for_ocr(image, factor=3),
+                          {"method": "ocr_upscale", "upscale": 3,
+                           "max_source_pixels": _MAX_3X_OCR_SOURCE_PIXELS})
+
+    # Footer-region OCR variants target faint instructions below login forms.
+    # Cropping the bottom band lets autocontrast stretch low-opacity text without
+    # being dominated by the rest of the page.
+    if any(_active(label) for label in (
+        "bottom-region",
+        "bottom-region-2x",
+        "bottom-region-3x",
+        "bottom-region-contrast",
+        "bottom-region-contrast-2x",
+        "bottom-region-contrast-3x",
+    )):
+        footer = _bottom_region(image, ratio=0.45)
+        if _active("bottom-region"):
+            store_transformed("bottom-region", footer, {"crop": "bottom", "ratio": 0.45})
+        if _active("bottom-region-2x"):
+            store_transformed("bottom-region-2x", _upscale_for_ocr(footer, factor=2),
+                              {"crop": "bottom", "ratio": 0.45, "upscale": 2})
+        if _active("bottom-region-3x") and _fits_3x_ocr_bound(footer):
+            store_transformed("bottom-region-3x", _upscale_for_ocr(footer, factor=3),
+                              {"crop": "bottom", "ratio": 0.45, "upscale": 3,
+                               "max_source_pixels": _MAX_3X_OCR_SOURCE_PIXELS})
+        footer_contrast = _footer_contrast(footer)
+        if _active("bottom-region-contrast"):
+            store_transformed("bottom-region-contrast", footer_contrast,
+                              {"crop": "bottom", "ratio": 0.45, "method": "autocontrast"})
+        if _active("bottom-region-contrast-2x"):
+            store_transformed("bottom-region-contrast-2x", _upscale_for_ocr(footer_contrast, factor=2),
+                              {"crop": "bottom", "ratio": 0.45, "method": "autocontrast",
+                               "upscale": 2})
+        if _active("bottom-region-contrast-3x") and _fits_3x_ocr_bound(footer_contrast):
+            store_transformed("bottom-region-contrast-3x", _upscale_for_ocr(footer_contrast, factor=3),
+                              {"crop": "bottom", "ratio": 0.45, "method": "autocontrast",
+                               "upscale": 3, "max_source_pixels": _MAX_3X_OCR_SOURCE_PIXELS})
 
     # OCR preprocessing variants — critical for recovering text overlaid on photos.
     # White-text extraction: inverts then binarises, surfacing white/light text on

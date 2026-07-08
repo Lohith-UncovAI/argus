@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
+from argus_img.artifacts.store import ArtifactStore
 from argus_img.core.config import config_hash, load_config
 from argus_img.core.enums import ScanMode, UseProfile
 from argus_img.core.models import ScanRequest
@@ -41,7 +42,50 @@ def _capabilities() -> None:
 
 
 def _health() -> None:
-    print(json.dumps({"status": "ok", "offline_mode": True, "gpu_required": False}, indent=2))
+    from argus_img.api.routes.health import health
+
+    print(json.dumps(health(), indent=2, sort_keys=True))
+
+
+def _storage_status_payload() -> Dict[str, Any]:
+    config = load_config()
+    store = ArtifactStore(Path(config.data_dir))
+    return store.storage_status(config.storage.maximum_total_store_bytes)
+
+
+def _storage_cleanup_payload() -> Dict[str, Any]:
+    config = load_config()
+    store = ArtifactStore(Path(config.data_dir))
+    before = store.storage_status(config.storage.maximum_total_store_bytes)
+    recovered_orphans = store.recover_orphans()
+    expired_jobs = store.cleanup_job_dirs(older_than_seconds=config.storage.job_directory_retention_seconds)
+    garbage_collected = store.garbage_collect(retention_seconds=config.storage.orphan_grace_period_seconds)
+    expired_reports = store.expire_old_reports(config.storage.report_retention_seconds)
+    expired_grants = store.revoke_expired_grants(config.storage.released_artifact_retention_seconds)
+    expired_forensic_evidence = store.cleanup_forensic_evidence(config.storage.forensic_evidence_retention_seconds)
+    after = store.storage_status(config.storage.maximum_total_store_bytes)
+    return {
+        "status": "ok",
+        "before": before,
+        "after": after,
+        "cleanup": {
+            "recovered_orphans": recovered_orphans,
+            "expired_jobs": expired_jobs,
+            "garbage_collected_orphans": garbage_collected,
+            "expired_reports": expired_reports,
+            "expired_grants": expired_grants,
+            "expired_forensic_evidence_rows": expired_forensic_evidence,
+        },
+    }
+
+
+def _storage(action: str) -> None:
+    if action == "status":
+        print(json.dumps(_storage_status_payload(), indent=2, sort_keys=True))
+    elif action == "cleanup":
+        print(json.dumps(_storage_cleanup_payload(), indent=2, sort_keys=True))
+    else:
+        raise SystemExit("unknown storage action: %s" % action)
 
 
 def _verify_offline() -> None:
@@ -73,6 +117,10 @@ def _argparse_main(argv=None) -> None:
     sub.add_parser("verify-offline")
     sub.add_parser("validate-config")
     sub.add_parser("validate-rules")
+    storage = sub.add_parser("storage")
+    storage_sub = storage.add_subparsers(dest="storage_command", required=True)
+    storage_sub.add_parser("status")
+    storage_sub.add_parser("cleanup")
     args = parser.parse_args(argv)
     if args.command == "scan":
         _scan(args.path, args.mode, args.profile, args.output, args.include_raw_text)
@@ -86,10 +134,13 @@ def _argparse_main(argv=None) -> None:
         _validate_config()
     elif args.command == "validate-rules":
         _validate_rules()
+    elif args.command == "storage":
+        _storage(args.storage_command)
 
 
 if typer is not None:
     app = typer.Typer(help="ARGUS-IMG offline image-security analyzer")
+    storage_app = typer.Typer(help="Artifact-store status and retention cleanup")
 
     @app.command()
     def scan(
@@ -120,6 +171,16 @@ if typer is not None:
     @app.command("validate-rules")
     def validate_rules() -> None:
         _validate_rules()
+
+    @storage_app.command("status")
+    def storage_status() -> None:
+        _storage("status")
+
+    @storage_app.command("cleanup")
+    def storage_cleanup() -> None:
+        _storage("cleanup")
+
+    app.add_typer(storage_app, name="storage")
 
 
 def main() -> None:

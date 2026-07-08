@@ -47,6 +47,23 @@ def analyze_with_tesseract(
         "light-text-tophat-2x",
         "light-text-tophat-wide",
         "light-text-tophat-wide-2x",
+        "ocr-small-3x",
+        "bottom-region",
+        "bottom-region-2x",
+        "bottom-region-3x",
+        "bottom-region-contrast",
+        "bottom-region-contrast-2x",
+        "bottom-region-contrast-3x",
+    })
+    _RAW_LINE_LABELS = frozenset({
+        "2x-enlargement",
+        "ocr-small-3x",
+        "light-text-tophat-2x",
+        "light-text-tophat-wide-2x",
+        "bottom-region-2x",
+        "bottom-region-3x",
+        "bottom-region-contrast-2x",
+        "bottom-region-contrast-3x",
     })
 
     observations: List[TextObservation] = []
@@ -94,6 +111,8 @@ def analyze_with_tesseract(
         _run_ocr(label, artifact, path, psm=6, seen_this_artifact=seen_this_artifact)
         if label in _SPARSE_TEXT_LABELS:
             _run_ocr(label, artifact, path, psm=11, seen_this_artifact=seen_this_artifact)
+        if label in _RAW_LINE_LABELS:
+            _run_ocr(label, artifact, path, psm=13, seen_this_artifact=seen_this_artifact)
     if observations:
         status = DetectorStatus.SUCCESS
         state = EpistemicState.CONFIRMED

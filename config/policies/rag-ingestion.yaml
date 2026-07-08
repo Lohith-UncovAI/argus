@@ -6,6 +6,11 @@ rules:
     priority: 900
     when: {category: prompt_injection, state_in: [CONFIRMED, HIGHLY_LIKELY]}
     action: BLOCK
+  - id: rag-review-phishing
+    priority: 675
+    when: {category: phishing, state_in: [CONFIRMED, HIGHLY_LIKELY, POSSIBLE]}
+    action: REVIEW
+    summary: Phishing or deceptive login indicators need review before RAG ingestion.
   - id: rag-review-privacy
     priority: 650
     when: {category: privacy, state: CONFIRMED}

@@ -68,7 +68,7 @@ from argus_img.orchestration.context import create_scan_context
 from argus_img.orchestration.mode_plan import plan_for_mode
 from argus_img.orchestration.representations import build_representation_manifest
 from argus_img.policy.engine import PolicyEngine
-from argus_img.policy.coverage import detected_without_finding_decision, mandatory_coverage_decision
+from argus_img.policy.coverage import STRICT_PROFILES, detected_without_finding_decision, mandatory_coverage_decision
 from argus_img.reconstruction.canonical import create_canonical_artifacts
 from argus_img.reporting.serialization import report_to_json
 from argus_img.transforms.registry import generate_fast_transformations
@@ -304,6 +304,11 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
     )
     try:
         OfflineGuard(strict=config.offline.strict).reject_remote_input(str(path))
+        try:
+            incoming_size = path.stat().st_size if path.exists() and not path.is_symlink() else 0
+            store.require_storage_headroom(incoming_size, config.storage.maximum_total_store_bytes)
+        except Exception as _quota_exc:
+            raise ResourceLimitExceeded("storage quota exceeded before quarantine: %s" % _quota_exc) from _quota_exc
         original = store.store_file(
             path,
             artifact_id="artifact:%s:original" % scan_id,
@@ -345,11 +350,14 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 max_artifact_bytes=config.limits.max_artifact_bytes,
                 max_text_bytes=config.limits.max_text_bytes,
                 deadline_epoch=time.time() + config.limits.parser_timeout_seconds,
+                use_profile=request.use_profile.value if hasattr(request.use_profile, "value") else str(request.use_profile),
             )
             launch_parser_worker(_worker_request, job_dir, wall_clock_timeout=float(config.limits.parser_timeout_seconds))
         except (WorkerCrashError, WorkerTimeoutError) as _wexc:
             raise IntakeRejected("image parse failed in isolated worker: %s" % _wexc) from _wexc
-        except Exception:
+        except Exception as _wexc:
+            if request.use_profile in STRICT_PROFILES or config.offline.strict:
+                raise IntakeRejected("parser worker unavailable for strict profile: %s" % _wexc) from _wexc
             # Worker infrastructure unavailable — fall through to in-process parsing.
             # This preserves compatibility until the worker is fully integrated.
             pass

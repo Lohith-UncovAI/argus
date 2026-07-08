@@ -52,6 +52,20 @@ def _matches(lower: str, phrases: List[str], pairs: List[Tuple[str, str]]) -> bo
     return any(a in lower and b in lower for a, b in pairs)
 
 
+def _looks_like_login_form(lower: str) -> bool:
+    has_user_field = any(term in lower for term in ("username", "user name", "email", "account id", "login id"))
+    has_password_field = "password" in lower or "passcode" in lower
+    has_submit = any(term in lower for term in ("sign in", "signin", "log in", "login", "submit", "continue"))
+    brand_or_header = any(
+        term in lower
+        for term in (
+            "bank", "wallet", "account", "secure", "portal", "identity",
+            "verify", "authentication", "customer",
+        )
+    )
+    return has_user_field and has_password_field and has_submit and brand_or_header
+
+
 def analyze_phishing(
     texts: List[TextObservation], scan_id: str, include_raw_text: bool = False
 ) -> List[DetectorFinding]:
@@ -66,6 +80,8 @@ def analyze_phishing(
             ("login." in lower or "login/" in lower or "sign in" in lower or "log in" in lower)
             and any(term in lower for term in ("token", "password", "credential", "otp", "code"))
         ):
+            matched.append("credential harvesting")
+        if _looks_like_login_form(lower):
             matched.append("credential harvesting")
         matched = sorted(set(matched))
         if not matched:

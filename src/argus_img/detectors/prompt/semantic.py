@@ -123,6 +123,17 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bforget\s+(all\s+)?(earlier|previous|prior)\s+(rules|instructions?|context)\b', re.I), 0.85, "forget_rules"),
     (re.compile(r'\badmin\s+command\s*:\s*(disable|bypass|turn\s+off)\b.{0,80}\b(filters?|policy|safety|guardrails?)\b', re.I), 0.85, "admin_disable_filters"),
     (re.compile(r'\b(output|print|return|emit)\s+ARGUS[-_\s]*CANARY\b', re.I), 0.85, "print_secret"),
+    # Narrow OCR-corruption patterns for tiny prompt text.  These require a
+    # corrupted ignore-like lead token next to a previous+instructions fragment,
+    # avoiding broad matching of benign prose about "previous instructions".
+    (re.compile(
+        r'\b(?:jor|jgnor\w{0,4}|ignor\w{0,4}|ig[a-z]{2,6}re)\W+'
+        r'(?:prev\w{1,12}\W*inst\w{3,14}|previous\W+inst\w{3,14})\b',
+        re.I,
+    ), 0.80, "ignore_previous_ocr_typo"),
+    # ARGUS canary markers are deliberately specific to this project/test corpus.
+    # They are review-level alone and escalate when paired with override text.
+    (re.compile(r'\bARGUS\W*(?:CAN\W*ARY|CANARY)\b', re.I), 0.45, "argus_canary_marker"),
     (re.compile(r'\bcall\s+(?:the\s+)?(?:simulated\s+)?(?:tool\s+)?[a-zA-Z_][\w.-]*\b', re.I), 0.75, "tool_invocation"),
     # Suppress + redirect
     (re.compile(r'\bdo\s+not\s+\w+\b.{0,80}\binstead\b', re.I), 0.80, "suppress_redirect"),
@@ -614,6 +625,7 @@ def analyze_semantic(
                        "bracket_placeholder", "mention_secret", "print_secret",
                        "jailbreak_mode", "xml_injection", "md_system_override",
                        "yaml_role_system", "ignore_ocr_typo", "suppress_redirect_fragment",
+                       "ignore_previous_ocr_typo",
                        "suppress_redirect_ocr_typo", "mention_secret_ocr_typo",
                        "instead_secret", "instead_password", "ins_fragment_secret",
                        "ins_fragment_password", "tool_invocation", "forget_rules",
@@ -628,7 +640,7 @@ def analyze_semantic(
         if matched in ("process_caption", "figstep_colon_topic", "indirect_query_phrase"):
             reason_codes.append("INDIRECT_REFERENCE")
         if matched in ("read_and_send", "send_it_to", "send_to_email",
-                       "exfiltrate_to", "read_file_exfil"):
+                       "exfiltrate_to", "read_file_exfil", "argus_canary_marker"):
             reason_codes.append("DATA_EXFILTRATION")
 
         evidence: Dict[str, object] = {
