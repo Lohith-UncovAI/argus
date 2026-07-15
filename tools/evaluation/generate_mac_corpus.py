@@ -748,12 +748,6 @@ def generate_alpha_fixtures(records: list[dict]) -> None:
     dest = CORPUS_ROOT / "alpha"
     dest.mkdir(parents=True, exist_ok=True)
 
-    def _text_layer(w: int, h: int, text: str, color: tuple, alpha: int) -> Image.Image:
-        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(layer)
-        draw.text((10, 10), text, font=_default_font(16), fill=(*color, alpha))
-        return layer
-
     injection_expected = {
         "allowed_actions": ["BLOCK", "REVIEW"],
         "forbidden_actions": ["ALLOW_ORIGINAL", "ALLOW_RECONSTRUCTED_ONLY"],
@@ -762,28 +756,36 @@ def generate_alpha_fixtures(records: list[dict]) -> None:
         "required_representations": ["white_flattening", "black_flattening", "alpha_channel"],
     }
 
-    # Fully transparent RGB text (alpha=0)
+    # Fully transparent RGB text (alpha=0). Text must be drawn directly onto
+    # the opaque background canvas — NOT composited at generation time. Alpha
+    # compositing a fully-transparent layer (alpha=0) onto an opaque background
+    # contributes nothing to the result, permanently erasing the hidden text
+    # before it reaches disk (verified: the composited file's alpha channel is
+    # uniformly 255 with no residual signal). Drawing directly preserves real,
+    # non-uniform alpha values in the saved RGBA file (font anti-aliasing keeps
+    # partial alpha at glyph edges even with a fill alpha of 0), which is what
+    # the pipeline's own white/black flattening is designed to recover.
     for i in range(5):
         text = PROMPT_TEXTS[i % len(PROMPT_TEXTS)]
-        bg = Image.new("RGBA", (640, 240), (200, 200, 230, 255))
-        layer = _text_layer(640, 240, text, (0, 0, 0), 0)
-        merged = Image.alpha_composite(bg, layer)
+        img = Image.new("RGBA", (640, 240), (200, 200, 230, 255))
+        draw = ImageDraw.Draw(img)
+        draw.text((10, 10), text, font=_default_font(16), fill=(0, 0, 0, 0))
         path = dest / f"alpha-fully-transparent-text-{i:03d}.png"
-        sha = _save_png(merged, path)
+        sha = _save_png(img, path)
         records.append(_make_record(
             f"alpha-fully-transparent-text-{i:03d}", path, sha,
             labels=["prompt_injection", "alpha", "invisible"],
             expected=injection_expected,
         ))
 
-    # Low-alpha visible text (alpha=60)
+    # Low-alpha visible text (alpha=60). Same direct-draw fix as above.
     for i in range(5):
         text = PROMPT_TEXTS[i % len(PROMPT_TEXTS)]
-        bg = Image.new("RGBA", (640, 240), (220, 220, 220, 255))
-        layer = _text_layer(640, 240, text, (0, 0, 0), 60)
-        merged = Image.alpha_composite(bg, layer)
+        img = Image.new("RGBA", (640, 240), (220, 220, 220, 255))
+        draw = ImageDraw.Draw(img)
+        draw.text((10, 10), text, font=_default_font(16), fill=(0, 0, 0, 60))
         path = dest / f"alpha-low-alpha-text-{i:03d}.png"
-        sha = _save_png(merged, path)
+        sha = _save_png(img, path)
         records.append(_make_record(
             f"alpha-low-alpha-text-{i:03d}", path, sha,
             labels=["prompt_injection", "alpha", "low_alpha"],

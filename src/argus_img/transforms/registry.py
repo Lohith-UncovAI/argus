@@ -272,6 +272,8 @@ def generate_fast_transformations(
 
     # Deskew + CLAHE: corrects rotated/skewed injected text then enhances contrast.
     # Hough-line deskew works on binary edges, then CLAHE makes it OCR-readable.
+    # This only detects fine skew (near-horizontal lines, |angle| < 15°) — a page
+    # that's slightly tilted, not text rotated at an arbitrary large angle.
     if _active("deskew"):
         import numpy as np
         import cv2
@@ -301,6 +303,33 @@ def generate_fast_transformations(
         deskewed = clahe.apply(deskewed)
         store_transformed("deskew", Image.fromarray(deskewed),
                           {"method": "deskew_clahe", "angle_corrected": round(angle, 2)})
+
+    # Coarse rotation candidates: the fine Hough deskew above only corrects small
+    # skew and silently no-ops on text rotated at large arbitrary angles (an
+    # attacker doesn't need to keep injected text near-horizontal). Rather than
+    # guess a single "best" angle with a heuristic, generate one candidate per
+    # coarse angle and let OCR independently score each — the same approach
+    # already used for every other transform variant in this bank. 30-degree
+    # steps were chosen empirically: Tesseract reliably reads rotated text when
+    # a candidate lands within roughly +/-10-12 degrees of the true angle, so a
+    # 30-degree sweep leaves no gap wider than that tolerance.
+    _rotation_angles = (30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330)
+    if any(_active(f"rotation-candidate-{a}") for a in _rotation_angles):
+        import numpy as np
+        import cv2
+        gray_arr = np.array(gray)
+        h, w = gray_arr.shape
+        for angle in _rotation_angles:
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+            cos, sin = abs(M[0, 0]), abs(M[0, 1])
+            new_w, new_h = int(h * sin + w * cos), int(h * cos + w * sin)
+            M[0, 2] += (new_w / 2) - w / 2
+            M[1, 2] += (new_h / 2) - h / 2
+            rotated = cv2.warpAffine(gray_arr, M, (new_w, new_h),
+                                     flags=cv2.INTER_LINEAR,
+                                     borderMode=cv2.BORDER_REPLICATE)
+            store_transformed(f"rotation-candidate-{angle}", Image.fromarray(rotated),
+                              {"method": "coarse_rotation", "angle": angle})
 
     # Channel-difference transforms: isolate text hidden by adding to one channel
     # and subtracting from another (R+text, G-text → R-G reveals text).

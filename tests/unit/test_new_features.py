@@ -3,7 +3,7 @@
 Covers:
 - Misleading-label scorer (noisy OCR, word-count gate removal)
 - figstep_colon_topic pattern (multi-line, academic prefix required)
-- CLAHE and deskew transforms
+- CLAHE, deskew, and coarse rotation-candidate transforms
 - store.scan_id column and _scan_id_from_artifact_id parsing
 - ARGUS_STORAGE_MAX_BYTES env var
 - VLM / EasyOCR availability gates
@@ -222,6 +222,97 @@ def test_deskew_produces_artifact(tmp_path):
         active_transformations=frozenset(["deskew"]),
     )
     assert "deskew" in transforms, "deskew must produce a 'deskew' artifact"
+
+
+def test_rotation_candidates_produce_artifacts(tmp_path):
+    """Coarse rotation-candidate transforms must store one artifact per active angle.
+
+    Regression test: the transform labels must match exactly between
+    registry.py's store_transformed() calls and mode_plan.py's
+    active_transformations set (e.g. "rotation-candidate-90"), not a shared
+    prefix like "rotation-candidates" — a mismatch there silently produces
+    zero artifacts with no error.
+    """
+    pytest.importorskip("cv2")
+    import numpy as np
+    from PIL import Image
+
+    from argus_img.artifacts.store import ArtifactStore
+    from argus_img.transforms.registry import generate_fast_transformations
+
+    store = ArtifactStore(tmp_path / "data")
+    arr = np.zeros((64, 256, 3), dtype=np.uint8)
+    arr[30:34, 10:246] = 255
+    img = Image.fromarray(arr)
+    src = tmp_path / "input.png"
+    img.save(str(src))
+
+    artifact = store.store_file(
+        src,
+        artifact_id="artifact:scan:rotation-test:original",
+        media_type="image/png",
+        created_by="test",
+        role="original",
+    )
+
+    transforms = generate_fast_transformations(
+        store,
+        artifact,
+        store.resolve_path(artifact),
+        "scan:rotation-test",
+        active_transformations=frozenset(["rotation-candidate-90", "rotation-candidate-180"]),
+    )
+    assert "rotation-candidate-90" in transforms
+    assert "rotation-candidate-180" in transforms
+    # Only the two explicitly activated angles should be produced.
+    assert "rotation-candidate-270" not in transforms
+    assert "deskew" not in transforms
+
+
+def test_all_fast_plan_rotation_candidate_labels_match_registry(tmp_path):
+    """Every rotation-candidate label in FAST_PLAN must actually be produced.
+
+    Guards against the mode_plan/registry label set drifting apart again —
+    e.g. mode_plan.py listing an angle the registry loop no longer emits.
+    """
+    pytest.importorskip("cv2")
+    import numpy as np
+    from PIL import Image
+
+    from argus_img.artifacts.store import ArtifactStore
+    from argus_img.orchestration.mode_plan import FAST_PLAN
+    from argus_img.transforms.registry import generate_fast_transformations
+
+    rotation_labels = frozenset(
+        label for label in FAST_PLAN.active_transformations
+        if label.startswith("rotation-candidate-")
+    )
+    assert rotation_labels, "expected at least one rotation-candidate label in FAST_PLAN"
+
+    store = ArtifactStore(tmp_path / "data")
+    arr = np.zeros((64, 256, 3), dtype=np.uint8)
+    arr[30:34, 10:246] = 255
+    img = Image.fromarray(arr)
+    src = tmp_path / "input.png"
+    img.save(str(src))
+
+    artifact = store.store_file(
+        src,
+        artifact_id="artifact:scan:rotation-all-test:original",
+        media_type="image/png",
+        created_by="test",
+        role="original",
+    )
+
+    transforms = generate_fast_transformations(
+        store,
+        artifact,
+        store.resolve_path(artifact),
+        "scan:rotation-all-test",
+        active_transformations=rotation_labels,
+    )
+    for label in rotation_labels:
+        assert label in transforms, "%s active in FAST_PLAN but not produced" % label
 
 
 # ---------------------------------------------------------------------------
