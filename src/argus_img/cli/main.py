@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from argus_img.artifacts.store import ArtifactStore
 from argus_img.core.config import config_hash, load_config
 from argus_img.core.enums import ScanMode, UseProfile
+from argus_img.core.exceptions import ArgusError
 from argus_img.core.models import ScanRequest
 from argus_img.core.offline_guard import OfflineGuard
 from argus_img.detectors.prompt.rules import PromptRuleBundle
@@ -27,7 +28,10 @@ def _scan(path: str, mode: str, profile: str, output: Optional[str], include_raw
         use_profile=UseProfile(profile),
         include_raw_text=include_raw_text,
     )
-    report = scan_file(Path(path), request)
+    try:
+        report = scan_file(Path(path), request)
+    except ArgusError as exc:
+        raise SystemExit("scan rejected: %s" % exc) from exc
     payload = report_to_json(report)
     if output:
         Path(output).write_text(payload, encoding="utf-8")

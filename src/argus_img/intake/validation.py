@@ -64,6 +64,14 @@ def validate_image_file(
                     raise IntakeRejected("image decoded pixel count exceeds configured limits")
         with Image.open(path) as image:
             image.verify()
+        # verify() checks container structure but does not force full pixel
+        # decoding (e.g. a JPEG truncated mid-scan-data can pass verify()
+        # cleanly). Re-open and force a real decode so files that fail later,
+        # deeper in the pipeline (canonical reconstruction, decoder-differential)
+        # are rejected here instead, where the failure is already handled.
+        with Image.open(path) as image:
+            image.seek(0)
+            image.load()
     except IntakeRejected:
         raise
     except Exception as exc:
