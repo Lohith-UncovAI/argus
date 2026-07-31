@@ -4,7 +4,7 @@ rules:
     severity: high
     languages: [generic]
     patterns:
-      - '\b(exfiltrate|upload|send)\b.{0,80}\b(data|file|secret|token|password)\b'
+      - '\b(exfiltrate|upload|send)\s+(the\s+|a\s+|your\s+|this\s+|my\s+)?(data|file|secret|token|password)\b'
   - id: PI-GENERIC-BYPASS-001
     category: policy_bypass
     severity: high

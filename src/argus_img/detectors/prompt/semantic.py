@@ -75,7 +75,6 @@ _INJECTION_BIGRAMS: List[Tuple[str, str, float]] = [
     ("instead", "mention", 0.65),
     ("instead", "report", 0.65),
     ("print", "secret", 0.72),
-    ("reveal", "secret", 0.72),
     ("print", "password", 0.72),
     ("mention", "password", 0.72),
     ("secret", "key", 0.60),
@@ -83,9 +82,15 @@ _INJECTION_BIGRAMS: List[Tuple[str, str, float]] = [
     ("not", "mention", 0.40),
     ("dan", "mode", 0.80),
     ("jailbreak", "mode", 0.80),
-    ("developer", "mode", 0.55),
-    ("only", "know", 0.55),
-    ("you", "know", 0.45),
+    # "developer mode" alone is a real, common UI feature name (browser/OS/IDE
+    # dev-tools toggles) — the jailbreak-framing structural pattern below
+    # already requires "developer mode:" with a colon, which is what
+    # distinguishes the attack framing from an ordinary settings caption.
+    # Bare "only know"/"you know" bigrams were removed: "only you know" is a
+    # very common benign idiom ("only you know how you feel"). The
+    # verb-gated "only_you_know" structural pattern below (which requires a
+    # nearby extraction verb) and the "string/value/code/key/phrase that
+    # only you know" structural pattern still catch genuine attacks.
     ("string", "know", 0.55),
     ("value", "secret", 0.65),
     ("hidden", "value", 0.60),
@@ -99,7 +104,6 @@ _INJECTION_BIGRAMS: List[Tuple[str, str, float]] = [
     ("mention", "only", 0.50),
     # "string only" proximity
     ("string", "only", 0.55),
-    ("only", "know", 0.55),
     # Exfiltration patterns
     ("send", "to", 0.45),
     ("send", "it", 0.50),
@@ -134,7 +138,10 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     # ARGUS canary markers are deliberately specific to this project/test corpus.
     # They are review-level alone and escalate when paired with override text.
     (re.compile(r'\bARGUS\W*(?:CAN\W*ARY|CANARY)\b', re.I), 0.45, "argus_canary_marker"),
-    (re.compile(r'\bcall\s+(?:the\s+)?(?:simulated\s+)?(?:tool\s+)?[a-zA-Z_][\w.-]*\b', re.I), 0.75, "tool_invocation"),
+    # "tool" is required, not optional: without it this matched any "call
+    # the X" phrasing, including ordinary references like "call the search
+    # tool" describing which tool, not "call [the] tool <name>" invoking one.
+    (re.compile(r'\bcall\s+(?:the\s+)?(?:simulated\s+)?tool\b(?:\s+[a-zA-Z_][\w.-]*)?', re.I), 0.75, "tool_invocation"),
     # Suppress + redirect
     (re.compile(r'\bdo\s+not\s+\w+\b.{0,80}\binstead\b', re.I), 0.80, "suppress_redirect"),
     # "mention the password/string/secret"
@@ -152,6 +159,11 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'^process\s+\w+(\s+\w+)?\s*$', re.I | re.M), 0.40, "process_caption"),
     # DAN / jailbreak mode header
     (re.compile(r'\b(dan|jailbreak|developer|god|maintenance|admin|root)\s+mode\s*:', re.I), 0.85, "jailbreak_mode"),
+    # "enter/activate developer mode" — an activation verb applied to
+    # "developer mode" is jailbreak framing; bare "developer mode" alone
+    # (e.g. "the developer mode toggle in settings") is an ordinary UI
+    # feature reference and must not match here.
+    (re.compile(r'\b(enter|activate|enable|switch\s+to|turn\s+on)\s+(?:the\s+)?(?:unrestricted\s+)?(dan|jailbreak|developer|god|maintenance|admin|root)\s+mode\b', re.I), 0.55, "jailbreak_mode"),
     # XML/Markdown override
     (re.compile(r'<instructions?\s*>.{0,300}<\s*/\s*instructions?\s*>', re.I | re.S), 0.80, "xml_injection"),
     (re.compile(r'^#+\s*(new|updated|override)\s+system\s+prompt', re.I | re.M), 0.80, "md_system_override"),
@@ -195,8 +207,15 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bsend\s+it\s+to\b', re.I), 0.75, "send_it_to"),
     # "send <x> to <email/url>"
     (re.compile(r'\bsend\s+\w.{0,40}\bto\s+\S+@\S+\b', re.I), 0.85, "send_to_email"),
-    # Generic "upload/exfiltrate/transmit to <target>"
-    (re.compile(r'\b(upload|exfiltrate|transmit|forward)\s+.{0,60}\bto\b', re.I), 0.80, "exfiltrate_to"),
+    # Generic "upload/exfiltrate/transmit to <target>" — the destination must
+    # look external/suspicious (attacker infra, a URL, an email address, a
+    # generic remote/audit server) or this matches ordinary phrasing like
+    # "upload the vacation photos to the shared family album".
+    (re.compile(
+        r'\b(upload|exfiltrate|transmit|forward)\s+.{0,60}\bto\b\s*.{0,30}'
+        r'(?:\b(?:attacker|remote|external|webhook|audit|evil|server)\b|https?://|\S+@\S+)',
+        re.I,
+    ), 0.80, "exfiltrate_to"),
     # "read <file path>" followed by send/transmit — filesystem traversal + exfil
     (re.compile(r'\bread\s+[\w/\\.-]{3,}\b.{0,80}\b(send|upload|post|transmit)\b', re.I), 0.85, "read_file_exfil"),
     # Severely corrupted OCR: "Ins" fragment near "secret" — heavy obfuscation signature.
@@ -326,8 +345,11 @@ _STRUCTURAL: List[Tuple[re.Pattern, float, str]] = [
     (re.compile(r'\bention\b.{0,60}\b(instead|say|print|know)\b', re.I), 0.65, "suppress_redirect_fragment"),
     # "string that only you know" — common in embedded_text payloads (partial OCR)
     (re.compile(r'\bstring\b.{0,30}\b(only|you|know)\b', re.I), 0.70, "only_you_know"),
-    # "only you know" alone without "string" prefix
-    (re.compile(r'\bonly\s+you\s+know\b', re.I), 0.72, "only_you_know"),
+    # "only you know" alone without "string" prefix — "only you know" is also
+    # an extremely common benign idiom ("only you know how you feel"), so
+    # require a nearby extraction verb to distinguish "only you know it,
+    # print it" from ordinary uses.
+    (re.compile(r'\bonly\s+you\s+know\b(?=.{0,40}\b(print|reveal|repeat|say|tell|share|output|disclose)\b)', re.I), 0.72, "only_you_know"),
     # "prin" (truncated "print") near "secret" or "key" or "string"
     (re.compile(r'\bprin\w*\b.{0,30}\b(secret|key|string|password)\b', re.I), 0.68, "print_secret"),
     # "say the X is Y" redirect pattern (misleading substitution without suppress clause)
@@ -472,13 +494,22 @@ def _token_overlap_score(tokens: List[str]) -> float:
     return min(score / 2.0, 1.0)
 
 
+# Bigrams tolerate at most one filler word between the two tokens (e.g.
+# "ignore all previous" still matches the ("ignore", "previous") pair). A
+# wider window stops being a bigram proximity signal and starts matching
+# unrelated clauses that merely share both words anywhere nearby, e.g.
+# "override the city's traffic system" incorrectly matching ("override",
+# "system") across an unrelated intervening noun phrase.
+_BIGRAM_WINDOW = 2
+
+
 def _bigram_score(tokens: List[str]) -> float:
-    """Score based on ordered bigram proximity matches (window=4)."""
+    """Score based on ordered bigram proximity matches (see _BIGRAM_WINDOW)."""
     if len(tokens) < 2:
         return 0.0
     best = 0.0
     for i, t1 in enumerate(tokens):
-        window = tokens[i + 1: i + 5]
+        window = tokens[i + 1: i + 1 + _BIGRAM_WINDOW]
         for t2 in window:
             for b1, b2, w in _INJECTION_BIGRAMS:
                 if t1 == b1 and t2 == b2:

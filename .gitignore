@@ -26,6 +26,7 @@ tests/fixtures/*.png
 # Evaluation result archives and outputs
 evaluation-results.zip
 evaluation-results/
+tools/evaluation/results/
 *.zip
 result_*.json
 scan_output*.json
