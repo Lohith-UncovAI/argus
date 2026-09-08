@@ -391,6 +391,9 @@ class LocalTransformerClassifier:
                 str(self.model_dir / "model.onnx"),
                 providers=["CPUExecutionProvider"],
             )
+            # DeBERTa-v3 and many other encoders export without token_type_ids;
+            # feeding an input the graph does not declare is a hard error.
+            session._argus_input_names = {i.name for i in session.get_inputs()}
             self._runtime = (tokenizer, session)
         else:
             import torch  # noqa: F401
@@ -408,10 +411,11 @@ class LocalTransformerClassifier:
         enc = tokenizer(text, truncation=True, max_length=512, return_tensors=None)
         if self.backend == "onnx":
             import numpy as np
+            allowed = getattr(engine, "_argus_input_names", {"input_ids", "attention_mask"})
             feeds = {
                 k: np.asarray([v], dtype=np.int64)
                 for k, v in enc.items()
-                if k in {"input_ids", "attention_mask", "token_type_ids"}
+                if k in allowed
             }
             outputs = engine.run(None, feeds)
             return list(map(float, outputs[0][0]))
@@ -440,7 +444,8 @@ class LocalTransformerClassifier:
 
         per_label: Dict[str, float] = {}
         best_score = 0.0
-        best_label = "benign"
+        benign_name = next((s.name for s in self.label_map.labels.values() if s.benign), "benign")
+        best_label = benign_name
         for idx, prob in enumerate(pooled):
             spec = self.label_map.spec(idx)
             per_label[spec.name] = prob
@@ -450,6 +455,10 @@ class LocalTransformerClassifier:
                 best_score, best_label = prob, spec.name
 
         best_score = min(max(self.label_map.calibration.apply_score(best_score, raw_max_logit), 0.0), 1.0)
+        # Below the review threshold the dominant label is not "the attack class
+        # at 0.02" — report it as benign so logs/evidence are not misleading.
+        if best_score < self.label_map.threshold_review:
+            best_label = benign_name
         return PromptClassification(
             status="SUCCESS", score=best_score, label=best_label,
             per_label=per_label, model_source=str(self.model_dir), windows=len(windows),
