@@ -100,9 +100,9 @@ def main(argv) -> int:
         for r in rows:
             src = r.get("source", "")
             n = 1
-            if src.startswith("contrast"):
+            if "contrast" in src:
                 n = w + 1
-            elif src.startswith("hardneg") and _binlabel(r) == 0:
+            elif ("hardneg" in src or "ocr_capture" in src) and _binlabel(r) == 0:
                 n = w
             out.extend([r] * n)
         return out
