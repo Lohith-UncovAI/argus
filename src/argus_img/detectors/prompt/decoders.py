@@ -81,6 +81,12 @@ def derive_text_candidates(source: TextObservation, max_candidates: int = 20, ma
     if resegmented is not None and resegmented.lower() != lower:
         candidates.append(_candidate(source, "resegment", resegmented, 1, 0.6))
 
+    # De-spacing: char-separator obfuscation ("i.g.n.o.r.e.", "I g n o r e",
+    # "i-g-n-o-r-e") — collapse a run of single chars joined by one separator.
+    despaced = _despace(text)
+    if despaced is not None and despaced.lower() != lower:
+        candidates.append(_candidate(source, "despace", despaced, 1, 0.6))
+
     # OCR spelling repair: per-token, try the common character confusions
     # (rn->m, vv->w, cl->d, I->l, 0->o, 1->l, 5->s) and keep a substitution only
     # when it turns an unknown token into a dictionary word ("systen" -> "system",
@@ -144,6 +150,32 @@ def prefer_corrected_transcriptions(candidates: List[str]) -> List[str]:
             continue
         seen.add(k)
         out.append(by_key[k])
+    return out
+
+
+def _despace(text: str):
+    """Collapse single-character-separator obfuscation.
+
+    "i.g.n.o.r.e. .a.l.l" -> "ignore all"; "I g n o r e" -> "Ignore".
+    Only fires when most of the text is single chars joined by one separator.
+    """
+    # tokens of exactly one alnum char
+    singles = re.findall(r"(?<![A-Za-z0-9])[A-Za-z0-9](?![A-Za-z0-9])", text)
+    alpha = re.findall(r"[A-Za-z0-9]", text)
+    if len(alpha) < 8 or len(singles) < 0.6 * len(alpha):
+        return None
+    # drop the single separator between every pair of single chars
+    out = re.sub(r"([A-Za-z0-9])[\.\-_ ](?=[A-Za-z0-9])", r"\1", text)
+    out = re.sub(r"[\.\-_]", "", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    if not out or out == text:
+        return None
+    # word boundaries were destroyed; try to recover them
+    try:
+        import wordninja
+        out = " ".join(w for tok in out.split() for w in wordninja.split(tok) or [tok])
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

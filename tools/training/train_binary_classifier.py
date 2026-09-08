@@ -67,8 +67,11 @@ def main(argv) -> int:
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--max-length", type=int, default=256)
-    ap.add_argument("--distill-weight", type=float, default=0.3)
+    ap.add_argument("--distill-weight", type=float, default=0.0,
+                    help="KL distillation weight. Default 0: the ProtectAI teacher cannot handle negation and poisons the student; keep the teacher for a shadow-eval reference only.")
     ap.add_argument("--distill-temp", type=float, default=2.0)
+    ap.add_argument("--hard-negative-weight", type=float, default=3.0,
+                    help="loss multiplier for contrastive-negation and vocabulary-trap benign examples")
     ap.add_argument("--export-onnx", action="store_true")
     ap.add_argument("--seed", type=int, default=20260908)
     args = ap.parse_args(argv)
@@ -89,12 +92,30 @@ def main(argv) -> int:
 
     tok = AutoTokenizer.from_pretrained(args.base_model)
 
+    def _oversample(rows: List[dict]) -> List[dict]:
+        """Repeat the examples the model most needs the contrast on:
+        contrastive-negation pairs and vocabulary-trap hard negatives."""
+        w = max(1, int(round(args.hard_negative_weight)))
+        out = []
+        for r in rows:
+            src = r.get("source", "")
+            n = 1
+            if src.startswith("contrast"):
+                n = w + 1
+            elif src.startswith("hardneg") and _binlabel(r) == 0:
+                n = w
+            out.extend([r] * n)
+        return out
+
     def ds(rows):
         d = Dataset.from_dict({"text": [r["text"] for r in rows],
                                "label": [_binlabel(r) for r in rows]})
         return d.map(lambda b: tok(b["text"], truncation=True, max_length=args.max_length), batched=True)
 
-    d_tr, d_va = ds(tr), ds(va)
+    tr_os = _oversample(tr)
+    n_inj = sum(_binlabel(r) for r in tr_os)
+    d_tr, d_va = ds(tr_os), ds(va)
+    print("train rows after oversampling hard negatives: %d (inj=%d)" % (len(tr_os), n_inj))
 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.base_model, num_labels=2,
