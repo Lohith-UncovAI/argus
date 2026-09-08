@@ -130,6 +130,32 @@ def test_classifier_keeps_recall_on_the_labelled_attack_corpus():
 
 
 @pytest.mark.skipif(not prompt_classifier_available(), reason="no local classifier configured")
+def test_classifier_flags_multilingual_attacks_and_bounds_multilingual_benign():
+    """Coverage is partial — the base tokenizer is English. Non-English attacks
+    should still be flagged (shared subwords + a little in-language data); a
+    non-English benign FP must not single-handedly BLOCK (corroboration rule)."""
+    from argus_img.core.models import TextObservation
+    from argus_img.detectors.prompt.classifier import LocalTransformerClassifier
+    from argus_img.detectors.prompt.classify import analyze_classifier
+
+    clf = LocalTransformerClassifier.from_env()
+    thr = clf.label_map.threshold_review
+    items = [json.loads(l) for l in _CORPUS.read_text().splitlines() if l.strip()]
+    ml_atk = [i for i in items if i["category"] == "multilingual_attack"]
+    ml_ben = [i for i in items if i["category"] == "multilingual_benign"]
+
+    hit = sum(1 for i in ml_atk if clf.classify_sync(i["text"]).score >= thr)
+    assert hit >= 0.7 * len(ml_atk), "multilingual attack recall dropped"
+
+    for i in ml_ben:
+        obs = TextObservation(observation_id="o", source_artifact_id="a", detector_id="d",
+                              raw_text=i["text"], normalized_text=i["text"], engine="t")
+        # no corroboration -> any finding must be REVIEW, never BLOCK
+        for f in analyze_classifier([obs], "s", classifier=clf):
+            assert f.recommended_action.value != "BLOCK", i["text"]
+
+
+@pytest.mark.skipif(not prompt_classifier_available(), reason="no local classifier configured")
 def test_classifier_block_false_positives_on_adversarial_benign_stay_bounded():
     from argus_img.detectors.prompt.classifier import LocalTransformerClassifier
 
