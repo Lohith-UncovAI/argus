@@ -99,9 +99,31 @@ def _from_synthetic(holdout: set, multiplier: int, seed: int) -> List[Tuple[str,
     return rows
 
 
+def _from_ocr_captures(holdout: set, path: pathlib.Path) -> List[Tuple[str, int, str]]:
+    """Real OCR output over a labelled image corpus (extract_ocr_captures.py).
+    This is the highest-value negative/positive source — the exact text
+    distribution the classifier sees at scan time."""
+    if not path.is_file():
+        return []
+    rows: List[Tuple[str, int, str]] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        text = (rec["text"] or "").strip()[:MAX_CHARS]
+        if len(text) < 4 or _norm(text) in holdout:
+            continue
+        rows.append((text, int(rec["binary_label"]), "ocr_capture"))
+    print("ocr captures: %d rows" % len(rows))
+    return rows
+
+
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=pathlib.Path, default=REPO_ROOT / "tools" / "training" / "corpus")
+    ap.add_argument("--ocr-captures", type=pathlib.Path,
+                    default=REPO_ROOT / "tools" / "training" / "corpus" / "ocr_captures.jsonl",
+                    help="output of extract_ocr_captures.py; used if present")
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--synthetic-multiplier", type=int, default=10)
     ap.add_argument("--max-benign-ratio", type=float, default=1.6,
@@ -113,7 +135,9 @@ def main(argv) -> int:
     holdout = _holdout_keys()
     print("held out %d normalized texts (ARGUS corpus + adversarial probes)" % len(holdout))
 
-    rows = _from_public(holdout) + _from_synthetic(holdout, args.synthetic_multiplier, args.seed)
+    rows = (_from_public(holdout)
+            + _from_synthetic(holdout, args.synthetic_multiplier, args.seed)
+            + _from_ocr_captures(holdout, args.ocr_captures))
 
     # dedup by normalized text, injection wins ties
     by_key: Dict[str, Tuple[str, int, str]] = {}
