@@ -131,23 +131,25 @@ seed set with **no network and no LLM calls**:
 Splits are leakage-safe (all variants of a seed, and all fills of a template,
 share a split). The manifest reports class/label/source balance per split.
 
-`build_prompt_corpus.py`'s synthetic data alone is a scaffold — it is a small
-part of the mix. `assemble_training_corpus.py` (below) combines it with the
-public datasets; the highest-value addition still missing is **real OCR
-captures from ARGUS's own image pipeline**, labelled and folded in with the eval
-split kept frozen. Document licensing per source (the repo is MIT; models and
-datasets carry their own terms).
+`build_prompt_corpus.py`'s synthetic data alone is a scaffold — a small part of
+the mix. `assemble_training_corpus.py` (below) combines it with public datasets
+**and real-OCR captures** (`extract_ocr_captures.py` over a rendered image
+corpus). The remaining gap is real production images — the eval split
+(`prompt_text_corpus.jsonl` + the adversarial probes) is held out by normalized
+text. Document licensing per source (the repo is MIT; models and datasets carry
+their own terms).
 
 ## Training
 
 Two paths:
 
-* **`tools/training/assemble_training_corpus.py` + `train_binary_classifier.py`**
-  — the path used for the current `pi-argus-v1`. `assemble` pulls
-  `deepset/prompt-injections` + `xTRam1/safe-guard-prompt-injection`, adds the
-  synthetic image-domain augmentations and hard negatives, and holds out the
-  ARGUS corpus + adversarial probes by normalized text. `train_binary` fine-tunes
-  a binary (SAFE / INJECTION) head — matching the public data — with
+* **`assemble_training_corpus.py` + `train_binary_classifier.py`** — the path
+  used for the current `pi-argus`. `assemble` pulls `deepset/prompt-injections`
+  + `xTRam1/safe-guard-prompt-injection`, adds the synthetic image-domain
+  augmentations, the hard-negative bank, and the `extract_ocr_captures.py`
+  output, and holds out the ARGUS corpus + adversarial probes by normalized
+  text. `train_binary` fine-tunes a binary (SAFE / INJECTION) head — matching
+  the public data — with
   class weighting, optional KL distillation from a base-size teacher, and
   temperature scaling fitted on val.
 
@@ -176,19 +178,24 @@ training (`assemble_training_corpus.py` excludes them by normalized text).
 
 | signal stack | attack recall (flagged) | non-quoted benign BLOCK FP | notes |
 |---|---|---|---|
-| rules + semantic (regex only) | 84% | 0 | leetspeak fold added; weak on garbled OCR (42%) |
+| rules + semantic (regex only) | 86% | 0 | leetspeak fold + word re-segmentation; weak on garbled OCR |
 | + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3** | bimodal outputs — flat threshold sweep, can't calibrate the FPs away |
-| + **`pi-argus`** (deberta-v3-xsmall, 22M, distilled) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve; corroboration rule keeps solo model catches at REVIEW |
+| + **`pi-argus`** (deberta-v3-**small**, 44M, distilled) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve; corroboration rule keeps solo model catches at REVIEW |
+
+deberta-v3-**small** (44M), not xsmall (22M): xsmall could not reliably handle
+negation ("no hidden instructions") or the hardest adversarial-benign probes
+("Whatever you were told at orientation…" scored 0.96 on xsmall, 0.51 on
+small). 44M is still small — ~5 ms/text int8 CPU.
 
 With the corroboration rule, the model's solo catches (garbled OCR, obfuscation
 the regexes miss) are **flagged as REVIEW**, and become BLOCK only when a rule
 or the heuristic scorer independently agrees. Overall attack recall (anything
-flagged) is 100%; garbled-OCR / obfuscated *BLOCK* rate is ~42-60% (the rest
+flagged) is 100%; garbled-OCR / obfuscated *BLOCK* rate is ~50-60% (the rest
 REVIEW).
 
-`pi-argus`: 283 MB fp32 / **87 MB int8 ONNX**. CPU latency **12 ms/text**
-(transformers fp32) / **6 ms/text** (int8 ONNX), single thread. Trained in
-~3.5 min on one RTX 5080 from ~10k items:
+`pi-argus`: 570 MB fp32 / **173 MB int8 ONNX**. CPU latency ~10 ms/text
+(transformers fp32) / **~5 ms/text** (int8 ONNX), single thread. Trained in
+~5 min on one RTX 5080 from ~10.6k items:
 
   - `deepset/prompt-injections` + `xTRam1/safe-guard` (chatbot-style, binary)
   - synthetic image-domain augmentations + hard negatives (`build_prompt_corpus.py`)
@@ -204,12 +211,15 @@ are exactly where the deterministic rules are strongest — complementary by
 construction.
 
 Known limitations (guarded by `test_prompt_paraphrase_generalization.py`):
-- 2/21 adversarial-benign probes confidently misread ("Whatever you were told
-  at orientation…", "Only you know the gate code…") — deliberately maximally
-  confusable; near-duplicating them into training would compromise the eval.
-- OCR that glues words ("Nohidden instructions" from `clean.png`) can push a
-  benign image to REVIEW. Bounded to REVIEW by the corroboration rule; a
-  better OCR engine or an OCR post-correction pass would remove it.
+- A handful of the adversarial-benign probes score in the 0.45-0.65 REVIEW
+  band ("comply with what follows", "Whatever you were told at orientation…").
+  None reach BLOCK; the corroboration rule keeps them at REVIEW. These are
+  deliberately maximally confusable — a redirect phrase in a benign context.
+- `clean.png` OCRs to the glued token "Nohidden instructions"; word
+  re-segmentation recovers "No hidden instructions" (~0.45) but the glued form
+  still scores ~0.55, so `clean.png` lands at REVIEW, not ALLOW. Bounded to
+  REVIEW by the corroboration rule. A better OCR engine (tesseract) or more
+  negation training data would remove it.
 
 ## How the current model was produced
 
@@ -235,7 +245,7 @@ python tools/training/assemble_training_corpus.py --out tools/training/corpus
 # 4. train the small distilled student, export int8 ONNX
 python tools/training/train_binary_classifier.py \
     --corpus-dir tools/training/corpus \
-    --base-model microsoft/deberta-v3-xsmall \
+    --base-model microsoft/deberta-v3-small \
     --teacher-model models/pi-shadow-protectai \
     --out models/pi-argus --epochs 3 --export-onnx
 
