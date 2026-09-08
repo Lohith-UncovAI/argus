@@ -145,7 +145,26 @@ their own terms).
 
 ## Training
 
-Two paths:
+**One command:** `tools/training/build_model.py` chains corpus assembly →
+training → int8 ONNX export → held-out evaluation, enforces a metrics floor
+(attack recall, zero `benign_plain` / `benign_trap` BLOCKs, classifier recall
+and benign-FP bounds), and — only if the floor is met — writes
+`<out>/PROVENANCE.json`: git SHA, every step's arguments, the seed, sha256 of
+each corpus split and of the held-out corpus, base model, dependency versions,
+the evaluation metrics, and the classifier fingerprint.
+
+```
+python tools/training/build_model.py --out models/pi-argus --epochs 4
+```
+
+Datasets and the base model come from the local Hugging Face cache; training may
+populate that cache from the network but scan time never does. CUDA training is
+not bytewise-deterministic — `PROVENANCE.json` pins the recipe, not the exact
+weights. Add `--image-corpus <dir> --ocr-manifest <file>` to regenerate the
+real-OCR captures first (slow); otherwise the checked-in
+`tools/training/corpus/ocr_captures.jsonl` is reused.
+
+The individual steps, if you need them:
 
 * **`assemble_training_corpus.py` + `train_binary_classifier.py`** — the path
   used for the current `pi-argus`. `assemble` pulls `deepset/prompt-injections`
@@ -320,7 +339,18 @@ gitignored — it does not travel with the source.
    `ARGUS_PROMPT_CLASSIFIER_PATH` to that path (and
    `ARGUS_PROMPT_CLASSIFIER_BACKEND=onnx` to use the int8 file). Nothing is
    fetched at scan time.
-3. `GET /v1/attestation` and `GET /v1/capabilities` will report the adapter,
+3. Run the preflight check before starting the service:
+
+   ```
+   PYTHONPATH=src python -m argus_img.detectors.prompt.classifier
+   ```
+
+   It exits non-zero and lists concrete problems (missing `model.onnx`, wrong
+   backend, unparseable / mis-ordered label map, failed import) instead of the
+   classifier silently disabling itself. The same problems appear as
+   `preflight_problems` under `model_adapters.prompt_classifier` in
+   `GET /v1/capabilities`.
+4. `GET /v1/attestation` and `GET /v1/capabilities` will report the adapter,
    backend, labels, thresholds and fingerprint; confirm the fingerprint matches
    the released one.
 

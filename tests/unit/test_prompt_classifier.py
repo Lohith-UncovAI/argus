@@ -21,6 +21,7 @@ from argus_img.detectors.prompt.classifier import (
     PromptClassification,
     classifier_fingerprint,
     classifier_status,
+    classifier_preflight,
     load_label_map,
     load_prompt_classifier,
     prompt_classifier_available,
@@ -166,6 +167,44 @@ def test_classifier_status_unconfigured(monkeypatch):
     status = classifier_status()
     assert status["configured"] is False
     assert status["adapter"] == "NullPromptClassifier"
+
+
+def test_preflight_reports_concrete_problems(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARGUS_PROMPT_CLASSIFIER_PATH", raising=False)
+    assert classifier_preflight() == ["ARGUS_PROMPT_CLASSIFIER_PATH is unset"]
+
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path))
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_BACKEND", "onnx")
+    # empty dir: missing config, tokenizer, and model.onnx
+    problems = classifier_preflight()
+    assert any("config.json" in p for p in problems)
+    assert any("tokenizer" in p for p in problems)
+    assert any("model.onnx" in p for p in problems)
+
+    # a mis-ordered label map is caught
+    (tmp_path / "config.json").write_text('{"id2label": {"0": "SAFE", "1": "INJECTION"}}')
+    (tmp_path / "tokenizer.json").write_text("{}")
+    (tmp_path / "model.onnx").write_bytes(b"stub")
+    (tmp_path / "argus_label_map.json").write_text(json.dumps({
+        "threshold_block": 0.3, "threshold_review": 0.9,
+        "labels": {"0": {"name": "benign", "benign": True},
+                   "1": {"name": "prompt_injection"}},
+    }))
+    assert any("thresholds out of order" in p for p in classifier_preflight())
+
+
+def test_preflight_clean_on_a_well_formed_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path))
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_BACKEND", "transformers")
+    (tmp_path / "config.json").write_text('{"id2label": {"0": "SAFE", "1": "INJECTION"}}')
+    (tmp_path / "tokenizer.json").write_text("{}")
+    (tmp_path / "model.safetensors").write_bytes(b"stub")
+    (tmp_path / "argus_label_map.json").write_text(json.dumps({
+        "threshold_block": 0.65, "threshold_review": 0.55,
+        "labels": {"0": {"name": "benign", "benign": True},
+                   "1": {"name": "prompt_injection"}},
+    }))
+    assert classifier_preflight() == []
 
 
 # ── analyze_classifier findings ──────────────────────────────────────────

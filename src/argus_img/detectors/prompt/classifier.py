@@ -58,7 +58,7 @@ __all__ = [
     "ONNXPromptClassifier", "TransformersPromptClassifier",
     "load_prompt_classifier", "load_label_map",
     "prompt_classifier_available", "classifier_model_dir", "classifier_fingerprint",
-    "classifier_status",
+    "classifier_status", "classifier_preflight",
 ]
 
 # ── Decision thresholds (calibratable; see tools/evaluation/calibrate_prompt_detectors.py)
@@ -296,6 +296,59 @@ def classifier_fingerprint(model_dir: Optional[Path] = None) -> Optional[str]:
     return "sha256:" + h.hexdigest()
 
 
+def classifier_preflight(model_dir: Optional[Path] = None) -> List[str]:
+    """Operator-facing validation of a configured model directory.
+
+    Returns a list of concrete problems (empty list = healthy). Meant for a
+    deploy-time check — a misconfigured ``ARGUS_PROMPT_CLASSIFIER_PATH`` otherwise
+    just silently disables the classifier (``prompt_classifier_available()`` ->
+    False) with no hint why.
+    """
+    raw = os.environ.get(_ENV_PATH, "").strip()
+    model_dir = Path(model_dir) if model_dir is not None else (Path(raw) if raw else None)
+    problems: List[str] = []
+    if model_dir is None:
+        return ["ARGUS_PROMPT_CLASSIFIER_PATH is unset"]
+    if not model_dir.is_dir():
+        return ["ARGUS_PROMPT_CLASSIFIER_PATH is not a directory: %s" % model_dir]
+
+    backend = os.environ.get(_ENV_BACKEND, "transformers").strip().lower()
+    if backend not in ("transformers", "onnx"):
+        problems.append("ARGUS_PROMPT_CLASSIFIER_BACKEND=%r is not 'transformers' or 'onnx'" % backend)
+
+    if not (model_dir / "config.json").is_file():
+        problems.append("missing config.json")
+    if not any((model_dir / f).is_file() for f in ("tokenizer.json", "spm.model", "vocab.txt")):
+        problems.append("no tokenizer files (tokenizer.json / spm.model / vocab.txt)")
+    if backend == "onnx" and not (model_dir / "model.onnx").is_file():
+        problems.append("backend=onnx but model.onnx is missing (run train with --export-onnx)")
+    if backend == "transformers" and not any(
+        (model_dir / w).is_file() for w in ("model.safetensors", "pytorch_model.bin")
+    ):
+        problems.append("backend=transformers but no model.safetensors / pytorch_model.bin")
+
+    override = os.environ.get(_ENV_LABELMAP, "").strip() or None
+    try:
+        lm = load_label_map(model_dir, override)
+        benign = [i for i in lm.labels if lm.spec(i).benign]
+        if not benign:
+            problems.append("label map declares no benign label")
+        if not (0.0 < lm.threshold_review <= lm.threshold_block <= 1.0):
+            problems.append("label map thresholds out of order: review=%s block=%s"
+                            % (lm.threshold_review, lm.threshold_block))
+    except Exception as exc:  # noqa: BLE001
+        problems.append("label map failed to load: %s" % exc)
+
+    try:
+        if backend == "onnx":
+            import onnxruntime  # noqa: F401
+        import transformers  # noqa: F401
+    except ImportError as exc:
+        problems.append("backend import failed: %s" % exc)
+
+    return problems
+
+
 def classifier_status() -> Dict[str, object]:
     """Structured status for the /v1/capabilities and attestation endpoints."""
     model_dir = classifier_model_dir()
@@ -309,8 +362,11 @@ def classifier_status() -> Dict[str, object]:
         "backend": os.environ.get(_ENV_BACKEND, "transformers").strip().lower(),
         "model_fingerprint": classifier_fingerprint(model_dir),
     }
+    preflight = classifier_preflight(model_dir)
+    if preflight:
+        status["preflight_problems"] = preflight
     if not available:
-        status["reason"] = "backend import failed or model.onnx missing"
+        status["reason"] = "; ".join(preflight) or "backend import failed or model.onnx missing"
         status["adapter"] = "NullPromptClassifier"
         return status
     clf = LocalTransformerClassifier.from_env()
@@ -564,3 +620,21 @@ class TransformersPromptClassifier:
         if prompt_classifier_available():
             return await LocalTransformerClassifier.from_env().classify(text, context)
         return {"status": "UNSUPPORTED", "reason": "local transformers model path not configured"}
+
+
+if __name__ == "__main__":  # deploy-time check: `python -m argus_img.detectors.prompt.classifier`
+    import sys as _sys
+
+    _problems = classifier_preflight()
+    if _problems:
+        print("prompt classifier preflight: %d problem(s)" % len(_problems))
+        for _p in _problems:
+            print("  - " + _p)
+        _sys.exit(1)
+    _st = classifier_status()
+    print("prompt classifier OK")
+    print("  fingerprint: %s" % _st.get("model_fingerprint"))
+    print("  backend:     %s" % _st.get("backend"))
+    print("  labels:      %s" % _st.get("labels"))
+    print("  thresholds:  block=%s review=%s  calibration=%s"
+          % (_st.get("threshold_block"), _st.get("threshold_review"), _st.get("calibration")))
