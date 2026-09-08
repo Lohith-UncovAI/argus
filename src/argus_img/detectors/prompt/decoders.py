@@ -81,6 +81,15 @@ def derive_text_candidates(source: TextObservation, max_candidates: int = 20, ma
     if resegmented is not None and resegmented.lower() != lower:
         candidates.append(_candidate(source, "resegment", resegmented, 1, 0.6))
 
+    # OCR spelling repair: per-token, try the common character confusions
+    # (rn->m, vv->w, cl->d, I->l, 0->o, 1->l, 5->s) and keep a substitution only
+    # when it turns an unknown token into a dictionary word ("systen" -> "system",
+    # "prornpt" -> "prompt", "reveaI" -> "reveal"). Real words and true gibberish
+    # are left alone.
+    repaired = _ocr_spell_repair(text)
+    if repaired is not None and repaired.lower() != lower:
+        candidates.append(_candidate(source, "ocr_repair", repaired, 1, 0.6))
+
     return candidates[:max_candidates]
 
 
@@ -105,6 +114,77 @@ _KNOWN_COMPOUND = frozenset({
     "hostname", "namespace", "keyboard", "notebook", "dashboard", "framework",
     "database", "runtime", "codebase", "metadata", "whitespace", "lowercase",
 })
+
+
+def prefer_corrected_transcriptions(candidates: List[str]) -> List[str]:
+    """Given [raw_text, *derived_candidates], drop any candidate that another
+    candidate is a pure space-expansion of.
+
+    "Nohidden instructions" and "No hidden instructions" describe the same image
+    text; the spaced form is the faithful transcription, so the glued form is
+    dropped. Decoded payloads (base64/hex/reversed) are NOT space-expansions of
+    the source, so they survive and are still scored.
+    """
+    def _key(s: str) -> str:
+        return re.sub(r"\s+", "", s).lower()
+
+    by_key: dict = {}
+    for c in candidates:
+        k = _key(c)
+        prev = by_key.get(k)
+        # keep the variant with the most whitespace (the resegmented one)
+        if prev is None or c.count(" ") > prev.count(" "):
+            by_key[k] = c
+    # preserve original order, using the chosen representative per key
+    seen: set = set()
+    out: List[str] = []
+    for c in candidates:
+        k = _key(c)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(by_key[k])
+    return out
+
+
+_OCR_CONFUSIONS = [
+    ("rn", "m"), ("vv", "w"), ("cl", "d"), ("ri", "n"), ("nn", "m"),
+    ("ii", "n"), ("l", "i"), ("i", "l"), ("0", "o"), ("1", "l"), ("1", "i"),
+    ("5", "s"), ("8", "b"), ("6", "b"), ("9", "g"), ("3", "e"),
+]
+
+
+def _ocr_spell_repair(text: str):
+    """Repair single OCR-confusion errors that turn a word into gibberish.
+
+    For each non-word token, try each confusion once; if exactly one produces a
+    dictionary word, take it. Returns the repaired string, or None if nothing
+    changed.
+    """
+    try:
+        import wordninja
+        vocab = wordninja.DEFAULT_LANGUAGE_MODEL._wordcost
+    except Exception:  # noqa: BLE001
+        return None
+    changed = False
+    out = []
+    for tok in re.split(r"(\s+)", text):
+        core = tok.lower()
+        if not core or not core.isalnum() or core in vocab or len(core) < 3 or len(core) > 14:
+            out.append(tok)
+            continue
+        fixes = set()
+        for a, b in _OCR_CONFUSIONS:
+            if a in core:
+                cand = core.replace(a, b, 1)
+                if cand in vocab and cand != core:
+                    fixes.add(cand)
+        if len(fixes) == 1:
+            out.append(fixes.pop())
+            changed = True
+        else:
+            out.append(tok)
+    return "".join(out) if changed else None
 
 
 def _resegment(text: str):

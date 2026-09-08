@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 
 from argus_img.core.enums import EpistemicState, PolicyAction
 from argus_img.core.models import DetectorFinding, TextObservation
+from argus_img.detectors.prompt.decoders import prefer_corrected_transcriptions
 from argus_img.detectors.prompt.intent import classify_text_context
 
 # ── Thresholds ───────────────────────────────────────────────────────────────
@@ -1002,7 +1003,8 @@ def analyze_semantic(
             continue
         seen_texts.add(text)
 
-        candidates = [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text]
+        candidates = prefer_corrected_transcriptions(
+            [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text])
 
         # Skip text that is clearly quoted/discussed (security education, warnings).
         # Same context filter used by the rule-based detector. If ANY candidate

@@ -30,9 +30,33 @@ from argus_img.detectors.prompt.classifier import (
     PromptClassification,
     classifier_fingerprint,
 )
+from argus_img.detectors.prompt.decoders import prefer_corrected_transcriptions
 from argus_img.detectors.prompt.intent import classify_text_context
 
 _DETECTOR_ID = "detector:prompt-classifier"
+
+# Aggressive channel/contrast transforms turn a clean image into OCR gibberish
+# ("Quareni} cashone Voldde) jsluDti@jur"), on which the model reports a
+# meaningless ~0.6. A candidate is dropped only when it is BOTH mostly
+# non-words AND the model is not confident about it — a confidently-scored
+# garbled attack ("acimin comrnand disabIe fiIters", ratio 0.33, model 0.99) is
+# kept, an unconfident gibberish reading of a clean image is not.
+_MIN_PROSE_RATIO = 0.40
+_MIN_PROSE_TOKENS = 3
+_GIBBERISH_KEEP_SCORE = 0.90
+
+
+def _prose_ratio(text: str) -> float:
+    try:
+        import wordninja
+        vocab = wordninja.DEFAULT_LANGUAGE_MODEL._wordcost
+    except Exception:  # noqa: BLE001
+        return 1.0
+    import re
+    toks = re.findall(r"[A-Za-z]{2,}", text)
+    if len(toks) < _MIN_PROSE_TOKENS:
+        return 1.0
+    return sum(1 for t in toks if t.lower() in vocab) / len(toks)
 
 
 def analyze_classifier(
@@ -79,12 +103,20 @@ def analyze_classifier(
             continue
         seen_texts.add(text)
 
-        candidates = [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text]
+        candidates = prefer_corrected_transcriptions(
+            [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text])
         if any(classify_text_context(c) in ("quoted", "discussed", "warning") for c in candidates):
             continue
 
-        scored = [clf.classify_sync(c) for c in candidates]
-        scored = [r for r in scored if r.status == "SUCCESS"]
+        scored = []
+        for c in candidates:
+            r = clf.classify_sync(c)
+            if r.status != "SUCCESS":
+                continue
+            # Drop OCR gibberish the model is not confident about.
+            if _prose_ratio(c) < _MIN_PROSE_RATIO and r.score < _GIBBERISH_KEEP_SCORE:
+                continue
+            scored.append(r)
         if not scored:
             continue
         result: PromptClassification = max(scored, key=lambda r: r.score)
