@@ -51,7 +51,7 @@ from argus_img.detectors.phishing import analyze_phishing
 from argus_img.detectors.privacy import analyze_privacy
 from argus_img.detectors.prompt.classify import analyze_classifier
 from argus_img.detectors.prompt.classifier import prompt_classifier_available
-from argus_img.detectors.prompt.decoders import derive_text_candidates
+from argus_img.detectors.prompt.decoders import derive_text_candidates, layout_join_texts
 from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import analyze_semantic
 from argus_img.detectors.provenance import provenance_status
@@ -650,6 +650,16 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 derived_map[obs.observation_id] = [item.text for item in derived]
                 for item in derived:
                     budget.consume_text(item.text)
+        # Text split across image tiles / regions: concatenate short adjacent OCR
+        # fragments (reading order, geometry-gated) so a payload sliced to evade
+        # per-fragment matching is still scored as one string.
+        for obs_id, joined in layout_join_texts(observations).items():
+            merged = derived_map.get(obs_id, [])
+            for text in joined:
+                if text not in merged:
+                    merged.append(text)
+                    budget.consume_text(text)
+            derived_map[obs_id] = merged
         t0_rules = datetime.now(timezone.utc)
         rules = PromptRuleBundle.load_default()
         prompt_findings = rules.analyze_texts(observations, scan_id, include_raw_text=False, derived_texts=derived_map)
