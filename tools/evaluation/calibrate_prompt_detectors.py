@@ -114,7 +114,8 @@ def run_pipeline(item: CorpusItem) -> PipelineOutcome:
     rule_action = _strongest_action(f.recommended_action for f in rule_findings) if rule_findings else None
     rule_covered_obs = {f.observation_ids[0] for f in rule_findings if f.observation_ids}
 
-    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs)
+    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs,
+                                         derived_texts=derived_map)
     semantic_action = _strongest_action(f.recommended_action for f in semantic_findings) if semantic_findings else None
 
     classifier_action = None
@@ -125,7 +126,8 @@ def run_pipeline(item: CorpusItem) -> PipelineOutcome:
         } | {oid for f in semantic_findings for oid in f.observation_ids}
         clf_findings = analyze_classifier([obs], "calibration", classifier=_CLASSIFIER,
                                           skip_observation_ids=rule_covered_obs,
-                                          corroborated_observation_ids=corroborated)
+                                          corroborated_observation_ids=corroborated,
+                                          derived_texts=derived_map)
         classifier_action = _strongest_action(f.recommended_action for f in clf_findings) if clf_findings else None
         result = _CLASSIFIER.classify_sync(item.text)
         classifier_score = result.score if result.status == "SUCCESS" else None

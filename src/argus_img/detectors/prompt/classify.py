@@ -42,6 +42,7 @@ def analyze_classifier(
     include_raw_text: bool = False,
     skip_observation_ids: Optional[set] = None,
     corroborated_observation_ids: Optional[set] = None,
+    derived_texts: Optional[dict] = None,
 ) -> List[DetectorFinding]:
     """Score text observations with the local ML classifier.
 
@@ -50,11 +51,16 @@ def analyze_classifier(
     NOT in this set is emitted as REVIEW instead — a lone, uncorroborated model
     prediction (often on OCR-garbled text) is the least trustworthy case and
     must not single-handedly BLOCK an image.
+    derived_texts: decoder candidates (leetspeak fold, word re-segmentation,
+    base64, ...) keyed by observation id — scored alongside the observation's
+    own text; the highest-scoring candidate wins (a de-obfuscated attack scores
+    higher; a benign FP is left to the negation-trained model + corroboration).
     """
     clf = classifier or LocalTransformerClassifier.from_env()
     if clf is None:
         return []
     corroborated = corroborated_observation_ids or set()
+    derived_texts = derived_texts or {}
 
     label_map = getattr(clf, "label_map", None)
     thr_block = getattr(label_map, "threshold_block", THRESHOLD_BLOCK)
@@ -73,12 +79,15 @@ def analyze_classifier(
             continue
         seen_texts.add(text)
 
-        if classify_text_context(text) in ("quoted", "discussed", "warning"):
+        candidates = [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text]
+        if any(classify_text_context(c) in ("quoted", "discussed", "warning") for c in candidates):
             continue
 
-        result: PromptClassification = clf.classify_sync(text)
-        if result.status != "SUCCESS":
+        scored = [clf.classify_sync(c) for c in candidates]
+        scored = [r for r in scored if r.status == "SUCCESS"]
+        if not scored:
             continue
+        result: PromptClassification = max(scored, key=lambda r: r.score)
         if result.score < thr_review:
             continue
 

@@ -980,12 +980,17 @@ def analyze_semantic(
     scan_id: str,
     include_raw_text: bool = False,
     skip_observation_ids: Optional[set] = None,
+    derived_texts: Optional[Dict[str, List[str]]] = None,
 ) -> List[DetectorFinding]:
     """Run semantic scoring over all text observations; return findings.
 
     skip_observation_ids: observation IDs already conclusively handled by the
     rule-based detector — skip these to avoid duplicate findings.
+    derived_texts: decoder-produced candidates (leetspeak fold, word
+    re-segmentation, base64, ...) keyed by observation id — scored alongside the
+    observation's own text, best score wins.
     """
+    derived_texts = derived_texts or {}
     findings: List[DetectorFinding] = []
     seen_texts: set = set()
 
@@ -997,13 +1002,16 @@ def analyze_semantic(
             continue
         seen_texts.add(text)
 
+        candidates = [text] + [d for d in derived_texts.get(obs.observation_id, []) if d and d != text]
+
         # Skip text that is clearly quoted/discussed (security education, warnings).
-        # Same context filter used by the rule-based detector.
-        ctx = classify_text_context(text)
-        if ctx in ("quoted", "discussed", "warning"):
+        # Same context filter used by the rule-based detector. If ANY candidate
+        # reads as quoted/discussed, treat the whole observation that way.
+        if any(classify_text_context(c) in ("quoted", "discussed", "warning") for c in candidates):
             continue
 
-        result = score_text(text)
+        scored = [(score_text(c), c) for c in candidates]
+        result, _best_text = max(scored, key=lambda sc: sc[0]["score"])  # type: ignore[index]
         score: float = result["score"]  # type: ignore[assignment]
         matched: str = result["matched"]  # type: ignore[assignment]
 

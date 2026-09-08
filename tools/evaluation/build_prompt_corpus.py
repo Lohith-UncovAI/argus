@@ -372,16 +372,15 @@ _HARD_NEGATIVE_TEMPLATES = [
     "They said only they know {benign_secret}, so ask at the front desk if you get locked out.",
     # negation — the OPPOSITE of an injection. The model must learn that "no
     # hidden instructions" is a benign assertion, not a match on "instructions".
-    "This image contains no hidden instructions.",
+    "{neg_lead} {neg_obj}.",
+    "{neg_lead} {neg_obj} — {neg_tail}.",
+    "This is a {clean_word} image: {neg_lead2} {neg_obj}.",
+    "Caption: {neg_lead} {neg_obj}, {neg_lead2} {neg_obj2}.",
     "No hidden instructions.",
-    "There are no embedded commands or prompts in this file.",
     "Nothing in this caption tells you to do anything.",
-    "No secret directives, no injected text — just the chart.",
-    "This document has no instructions for the reader to follow.",
     "The scan found no prompt injection and no hidden text.",
-    "No system prompt, no override, nothing to see here.",
     "This photo does not contain any instructions or commands.",
-    "Clean image: no watermark, no metadata, no hidden message.",
+    "Everything visible here is decorative; {neg_lead2} {neg_obj}.",
     # more discussion-of-injection (the model must learn discussion != attack)
     "This chapter analyses why 'ignore all previous instructions' became the canonical prompt-injection string.",
     "The red-team report lists 'reveal your system prompt' among the phrases their filter now blocks.",
@@ -406,6 +405,20 @@ _HN_SLOTS = {
     "briefing": ["orientation", "the safety briefing", "onboarding", "the site induction", "the team meeting"],
     "benign_secret": ["the gate code", "the wifi password", "where the spare key is", "the alarm code",
                       "the combination to the supply cabinet"],
+    "neg_lead": ["this image contains no", "there are no", "this file has no",
+                 "the picture shows no", "you will find no", "there is no",
+                 "this contains no", "this caption has no"],
+    "neg_lead2": ["no", "and no", "with no", "containing no", "nor any"],
+    "neg_obj": ["hidden instructions", "embedded commands", "injected text",
+                "secret directives", "system prompt", "prompt injection",
+                "hidden message", "override text", "concealed payload",
+                "instructions to follow", "commands for the reader",
+                "steganographic content", "adversarial text"],
+    "neg_obj2": ["hidden text", "embedded prompt", "secret command",
+                 "injected directive", "concealed instruction"],
+    "neg_tail": ["just the photo", "only the chart", "nothing to act on",
+                 "the caption is descriptive only", "safe to display"],
+    "clean_word": ["clean", "plain", "ordinary", "benign", "safe", "normal"],
 }
 
 _PLAIN_BENIGN = [

@@ -676,6 +676,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         semantic_findings = analyze_semantic(
             observations, scan_id, include_raw_text=False,
             skip_observation_ids=rule_covered_obs,
+            derived_texts=derived_map,
         )
         findings.extend(semantic_findings)
         detector_executions.append(
@@ -707,6 +708,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 observations, scan_id, include_raw_text=False,
                 skip_observation_ids=rule_covered_obs,
                 corroborated_observation_ids=corroborated_obs,
+                derived_texts=derived_map,
             )
             findings.extend(classifier_findings)
             has_block = any(f.state == EpistemicState.HIGHLY_LIKELY for f in classifier_findings)

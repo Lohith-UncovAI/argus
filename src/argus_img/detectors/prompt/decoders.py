@@ -72,6 +72,15 @@ def derive_text_candidates(source: TextObservation, max_candidates: int = 20, ma
     ):
         candidates.append(_candidate(source, "leetspeak", deleet, 1, 0.55))
 
+    # Word re-segmentation: OCR routinely drops inter-word spaces
+    # ("Nohidden instructions", "forwardalldata", "Forgetearlier rules"). Split
+    # long unknown glued tokens back into words so every downstream signal sees
+    # readable text. Conservative — only tokens that split cleanly into known
+    # words are rewritten.
+    resegmented = _resegment(text)
+    if resegmented is not None and resegmented.lower() != lower:
+        candidates.append(_candidate(source, "resegment", resegmented, 1, 0.6))
+
     return candidates[:max_candidates]
 
 
@@ -89,4 +98,40 @@ def _deleet(text: str) -> str:
     folded = text.lower().translate(_LEET_MAP)
     # collapse "1gn0r3" spacing artifacts is out of scope; just the char fold
     return folded
+
+
+_KNOWN_COMPOUND = frozenset({
+    "pythonpath", "textobservation", "screenshot", "username", "filename",
+    "hostname", "namespace", "keyboard", "notebook", "dashboard", "framework",
+    "database", "runtime", "codebase", "metadata", "whitespace", "lowercase",
+})
+
+
+def _resegment(text: str):
+    """Split OCR-glued tokens back into words. Returns the rewritten string, or
+    None if nothing changed / the splitter is unavailable.
+
+    Only rewrites a token when: it is 8+ chars, all alphabetic, not a known
+    compound, and wordninja splits it into >= 2 parts that are each >= 2 chars
+    with at least one >= 4 chars. That keeps identifiers and real long words
+    ("instructions", "configuration") intact while fixing "nohidden" ->
+    "no hidden" and "forwardalldata" -> "forward all data".
+    """
+    try:
+        import wordninja
+    except ImportError:
+        return None
+    out = []
+    changed = False
+    for tok in re.split(r"(\s+)", text):
+        if (len(tok) >= 8 and tok.isalpha() and tok.lower() not in _KNOWN_COMPOUND):
+            parts = wordninja.split(tok)
+            if (len(parts) >= 2 and all(len(p) >= 2 for p in parts)
+                    and any(len(p) >= 4 for p in parts)
+                    and "".join(parts).lower() == tok.lower()):
+                out.append(" ".join(parts))
+                changed = True
+                continue
+        out.append(tok)
+    return "".join(out) if changed else None
 
