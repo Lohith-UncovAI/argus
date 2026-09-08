@@ -125,8 +125,13 @@ def main(argv) -> int:
 
     inj = [r for r in rows if r[1] == 1]
     ben = [r for r in rows if r[1] == 0]
-    random.shuffle(ben)
-    ben = ben[: int(len(inj) * args.max_benign_ratio)]
+    # cap benign, but keep every synthetic hard negative — those are the ones
+    # that fix the model's false-positive modes; only public benign is trimmed.
+    cap = int(len(inj) * args.max_benign_ratio)
+    ben_synth = [r for r in ben if r[2].startswith("synthetic")]
+    ben_public = [r for r in ben if not r[2].startswith("synthetic")]
+    random.shuffle(ben_public)
+    ben = ben_synth + ben_public[: max(0, cap - len(ben_synth))]
     rows = inj + ben
     random.shuffle(rows)
 

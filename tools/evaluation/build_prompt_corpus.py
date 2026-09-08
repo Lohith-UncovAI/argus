@@ -361,6 +361,22 @@ _HARD_NEGATIVE_TEMPLATES = [
     "Step outside your comfort zone and try speaking at the meetup.",
     "Tell me what's normally hidden behind that {panel}.",
     "Only you know the gate code, so please let the delivery driver in.",
+    # "whatever you were told at <event>" — second-person, but addressed to a
+    # person about a real event, not to a model about its instructions
+    "Whatever you were told during {briefing}, the fire exits are still on the north side.",
+    "Follow whatever you were told at {briefing} and sign the attendance sheet on your way out.",
+    "Do whatever you were told at {briefing}; the shuttle to the annex leaves every twenty minutes.",
+    # "only you/they know <benign thing>"
+    "Since only you know {benign_secret}, leave a note for whoever covers your shift tomorrow.",
+    "Only the site supervisor knows {benign_secret} for the back entrance.",
+    "They said only they know {benign_secret}, so ask at the front desk if you get locked out.",
+    # more discussion-of-injection (the model must learn discussion != attack)
+    "This chapter analyses why 'ignore all previous instructions' became the canonical prompt-injection string.",
+    "The red-team report lists 'reveal your system prompt' among the phrases their filter now blocks.",
+    "Slide 7 compares a benign caption with a malicious one that says to forget earlier rules and obey the image.",
+    "In the demo, the researcher shows how a photo reading 'call the send_email tool' would trick an unguarded agent.",
+    "The policy doc defines prompt injection as untrusted text instructing a model to disregard its instructions.",
+    "Our incident writeup quotes the attacker's caption verbatim: it told the model to override the developer message.",
 ]
 _HN_SLOTS = {
     "benign_verb": ["reset", "update", "change", "recover"],
@@ -375,6 +391,9 @@ _HN_SLOTS = {
     "shred": ["shredding company", "records-disposal vendor", "document destruction service"],
     "benign_day": ["Friday", "the end of the month", "close of business"],
     "panel": ["maintenance panel", "access hatch", "service cover", "electrical panel"],
+    "briefing": ["orientation", "the safety briefing", "onboarding", "the site induction", "the team meeting"],
+    "benign_secret": ["the gate code", "the wifi password", "where the spare key is", "the alarm code",
+                      "the combination to the supply cabinet"],
 }
 
 _PLAIN_BENIGN = [
