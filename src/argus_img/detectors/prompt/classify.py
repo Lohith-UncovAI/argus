@@ -41,10 +41,20 @@ def analyze_classifier(
     classifier: Optional[object] = None,
     include_raw_text: bool = False,
     skip_observation_ids: Optional[set] = None,
+    corroborated_observation_ids: Optional[set] = None,
 ) -> List[DetectorFinding]:
+    """Score text observations with the local ML classifier.
+
+    corroborated_observation_ids: observations that the deterministic rules or
+    the heuristic scorer already flagged. A classifier BLOCK on an observation
+    NOT in this set is emitted as REVIEW instead — a lone, uncorroborated model
+    prediction (often on OCR-garbled text) is the least trustworthy case and
+    must not single-handedly BLOCK an image.
+    """
     clf = classifier or LocalTransformerClassifier.from_env()
     if clf is None:
         return []
+    corroborated = corroborated_observation_ids or set()
 
     label_map = getattr(clf, "label_map", None)
     thr_block = getattr(label_map, "threshold_block", THRESHOLD_BLOCK)
@@ -72,7 +82,9 @@ def analyze_classifier(
         if result.score < thr_review:
             continue
 
-        active = result.score >= thr_block
+        corroborated_here = obs.observation_id in corroborated
+        active = result.score >= thr_block and corroborated_here
+        downgraded = result.score >= thr_block and not corroborated_here
         spec_reason_codes = _reason_codes_for(clf, result.label)
 
         state = EpistemicState.HIGHLY_LIKELY if active else EpistemicState.POSSIBLE
@@ -90,6 +102,8 @@ def analyze_classifier(
             "windows_scored": result.windows,
             "threshold_block": thr_block,
             "threshold_review": thr_review,
+            "corroborated_by_rules_or_semantic": corroborated_here,
+            "downgraded_to_review_uncorroborated": downgraded,
             "text_length": len(text),
             "full_text_returned": False,
             "forensic_evidence_required": True,
@@ -114,10 +128,11 @@ def analyze_classifier(
             recommended_action=action,
             limitations=[
                 "ML classifier output is a probability, not proof; findings cap at "
-                "HIGHLY_LIKELY and never drive a decision on their own.",
+                "HIGHLY_LIKELY. A BLOCK-level score is emitted as REVIEW unless the "
+                "rules or the heuristic scorer independently flagged the same text.",
                 "Model runs offline on CPU against a local checkpoint; it reflects its "
                 "training distribution and may miss novel phrasings or misfire on "
-                "security-education content.",
+                "security-education content or OCR-garbled benign text.",
             ],
             evidence=evidence,
         ))

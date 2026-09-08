@@ -105,27 +105,30 @@ class PipelineOutcome:
 
 
 def run_pipeline(item: CorpusItem) -> PipelineOutcome:
-    """Reproduce the same rule -> classifier -> semantic wiring as orchestration/pipeline.py."""
+    """Reproduce the rule -> semantic -> classifier wiring of orchestration/pipeline.py."""
     obs = _obs(item)
     derived = derive_text_candidates(obs)
     derived_map = {obs.observation_id: [d.text for d in derived]} if derived else {}
     rule_findings = PromptRuleBundle.load_default().analyze_texts(
         [obs], "calibration", derived_texts=derived_map)
     rule_action = _strongest_action(f.recommended_action for f in rule_findings) if rule_findings else None
-
     rule_covered_obs = {f.observation_ids[0] for f in rule_findings if f.observation_ids}
+
+    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs)
+    semantic_action = _strongest_action(f.recommended_action for f in semantic_findings) if semantic_findings else None
 
     classifier_action = None
     classifier_score = None
     if _CLASSIFIER is not None:
+        corroborated = rule_covered_obs | {
+            oid for f in rule_findings for oid in f.observation_ids
+        } | {oid for f in semantic_findings for oid in f.observation_ids}
         clf_findings = analyze_classifier([obs], "calibration", classifier=_CLASSIFIER,
-                                          skip_observation_ids=rule_covered_obs)
+                                          skip_observation_ids=rule_covered_obs,
+                                          corroborated_observation_ids=corroborated)
         classifier_action = _strongest_action(f.recommended_action for f in clf_findings) if clf_findings else None
         result = _CLASSIFIER.classify_sync(item.text)
         classifier_score = result.score if result.status == "SUCCESS" else None
-
-    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs)
-    semantic_action = _strongest_action(f.recommended_action for f in semantic_findings) if semantic_findings else None
 
     # The real pipeline collects findings from all three signals and the policy
     # engine takes the strongest — a classifier REVIEW never masks a semantic

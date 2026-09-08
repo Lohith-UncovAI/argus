@@ -670,28 +670,52 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         rule_covered_obs = {obs_id for f in prompt_findings for obs_id in f.observation_ids
                             if f.state == EpistemicState.CONFIRMED}
 
+        # Heuristic scorer runs before the ML classifier so its coverage can
+        # corroborate a classifier BLOCK (see below).
+        t0_semantic = datetime.now(timezone.utc)
+        semantic_findings = analyze_semantic(
+            observations, scan_id, include_raw_text=False,
+            skip_observation_ids=rule_covered_obs,
+        )
+        findings.extend(semantic_findings)
+        detector_executions.append(
+            _execution(
+                "detector:semantic-scorer",
+                DetectorStatus.SUCCESS if semantic_findings else DetectorStatus.NO_EVIDENCE,
+                EpistemicState.CONFIRMED if semantic_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                family="prompt",
+                category="prompt_injection",
+                required=False,
+                started_at=t0_semantic,
+            )
+        )
+
         # Optional local ML classifier — evidence only, capped at HIGHLY_LIKELY.
-        # Absent a configured local model this is NOT_TESTED and the two signals
-        # above are unchanged.
-        classifier_covered_obs: set = set()
+        # A classifier BLOCK on an observation that neither the rules nor the
+        # heuristic scorer flagged is emitted as REVIEW instead: a lone,
+        # uncorroborated model prediction (often on OCR-garbled benign text) must
+        # not single-handedly BLOCK an image. Absent a configured local model
+        # this is NOT_TESTED and the two signals above are unchanged.
         if prompt_classifier_available():
             t0_classifier = datetime.now(timezone.utc)
+            corroborated_obs = rule_covered_obs | {
+                obs_id for f in prompt_findings for obs_id in f.observation_ids
+            } | {
+                obs_id for f in semantic_findings for obs_id in f.observation_ids
+            }
             classifier_findings = analyze_classifier(
                 observations, scan_id, include_raw_text=False,
                 skip_observation_ids=rule_covered_obs,
+                corroborated_observation_ids=corroborated_obs,
             )
             findings.extend(classifier_findings)
-            # A BLOCK-level model finding already covers the observation; let the
-            # heuristic scorer skip it, mirroring the rule -> semantic hand-off.
-            classifier_covered_obs = {
-                obs_id for f in classifier_findings for obs_id in f.observation_ids
-                if f.state == EpistemicState.HIGHLY_LIKELY
-            }
+            has_block = any(f.state == EpistemicState.HIGHLY_LIKELY for f in classifier_findings)
             detector_executions.append(
                 _execution(
                     "detector:prompt-classifier",
                     DetectorStatus.SUCCESS if classifier_findings else DetectorStatus.NO_EVIDENCE,
-                    EpistemicState.HIGHLY_LIKELY if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                    EpistemicState.HIGHLY_LIKELY if has_block else (
+                        EpistemicState.POSSIBLE if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND),
                     family="prompt",
                     category="prompt_injection",
                     required=False,
@@ -700,7 +724,8 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             )
             module_status["prompt_classifier"] = ModuleStatus(
                 name="prompt_classifier",
-                status=EpistemicState.HIGHLY_LIKELY if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                status=EpistemicState.HIGHLY_LIKELY if has_block else (
+                    EpistemicState.POSSIBLE if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND),
             )
         else:
             detector_executions.append(
@@ -719,24 +744,6 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 status=EpistemicState.NOT_TESTED,
                 reason="no_local_model_configured",
             )
-
-        t0_semantic = datetime.now(timezone.utc)
-        semantic_findings = analyze_semantic(
-            observations, scan_id, include_raw_text=False,
-            skip_observation_ids=rule_covered_obs | classifier_covered_obs,
-        )
-        findings.extend(semantic_findings)
-        detector_executions.append(
-            _execution(
-                "detector:semantic-scorer",
-                DetectorStatus.SUCCESS if semantic_findings else DetectorStatus.NO_EVIDENCE,
-                EpistemicState.CONFIRMED if semantic_findings else EpistemicState.NO_EVIDENCE_FOUND,
-                family="prompt",
-                category="prompt_injection",
-                required=False,
-                started_at=t0_semantic,
-            )
-        )
         t0_privacy = datetime.now(timezone.utc)
         privacy_findings = analyze_privacy(observations, scan_id, include_raw_text=False)
         findings.extend(privacy_findings)

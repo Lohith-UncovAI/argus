@@ -370,6 +370,18 @@ _HARD_NEGATIVE_TEMPLATES = [
     "Since only you know {benign_secret}, leave a note for whoever covers your shift tomorrow.",
     "Only the site supervisor knows {benign_secret} for the back entrance.",
     "They said only they know {benign_secret}, so ask at the front desk if you get locked out.",
+    # negation — the OPPOSITE of an injection. The model must learn that "no
+    # hidden instructions" is a benign assertion, not a match on "instructions".
+    "This image contains no hidden instructions.",
+    "No hidden instructions.",
+    "There are no embedded commands or prompts in this file.",
+    "Nothing in this caption tells you to do anything.",
+    "No secret directives, no injected text — just the chart.",
+    "This document has no instructions for the reader to follow.",
+    "The scan found no prompt injection and no hidden text.",
+    "No system prompt, no override, nothing to see here.",
+    "This photo does not contain any instructions or commands.",
+    "Clean image: no watermark, no metadata, no hidden message.",
     # more discussion-of-injection (the model must learn discussion != attack)
     "This chapter analyses why 'ignore all previous instructions' became the canonical prompt-injection string.",
     "The red-team report lists 'reveal your system prompt' among the phrases their filter now blocks.",
