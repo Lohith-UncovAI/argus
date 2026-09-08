@@ -115,8 +115,7 @@ not the architecture. A model trained on a weak negative set becomes a
 false-positive machine that flags every security blog post and every benign UI
 screenshot.
 
-`tools/evaluation/build_prompt_corpus.py` bootstraps a corpus from the 107-item
-seed set with **no network and no LLM calls**:
+`tools/evaluation/build_prompt_corpus.py` bootstraps a corpus from the labelled seed set with **no network and no LLM calls**:
 
 1. **Multi-label annotation** of every item into the schema above.
 2. **Attack augmentation** — simulated OCR corruption, leetspeak, character
