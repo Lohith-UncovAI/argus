@@ -40,5 +40,6 @@ memory/
 # Trained / exported prompt-injection classifier artifacts
 models/
 tools/training/**/_hf/
+tools/training/corpus/
 tools/evaluation/corpus/prompt_corpus.*.jsonl
 tools/evaluation/corpus/prompt_corpus.manifest.json
