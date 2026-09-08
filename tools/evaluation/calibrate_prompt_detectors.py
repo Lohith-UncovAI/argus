@@ -46,6 +46,7 @@ from argus_img.detectors.prompt.classifier import (
     classifier_fingerprint,
     prompt_classifier_available,
 )
+from argus_img.detectors.prompt.decoders import derive_text_candidates
 from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import (
     THRESHOLD_BLOCK,
@@ -106,7 +107,10 @@ class PipelineOutcome:
 def run_pipeline(item: CorpusItem) -> PipelineOutcome:
     """Reproduce the same rule -> classifier -> semantic wiring as orchestration/pipeline.py."""
     obs = _obs(item)
-    rule_findings = PromptRuleBundle.load_default().analyze_texts([obs], "calibration")
+    derived = derive_text_candidates(obs)
+    derived_map = {obs.observation_id: [d.text for d in derived]} if derived else {}
+    rule_findings = PromptRuleBundle.load_default().analyze_texts(
+        [obs], "calibration", derived_texts=derived_map)
     rule_action = _strongest_action(f.recommended_action for f in rule_findings) if rule_findings else None
 
     rule_covered_obs = {f.observation_ids[0] for f in rule_findings if f.observation_ids}

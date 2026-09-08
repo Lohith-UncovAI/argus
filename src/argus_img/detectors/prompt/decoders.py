@@ -58,5 +58,35 @@ def derive_text_candidates(source: TextObservation, max_candidates: int = 20, ma
     reversed_text = text[::-1]
     if any(word in reversed_text.lower() for word in ["ignore", "system", "password", "tool"]):
         candidates.append(_candidate(source, "reversed", reversed_text, 1, 0.5))
+
+    # Leetspeak fold: "1gn0r3 pr3v10u5 1n5truct10n5" -> "ignore previous
+    # instructions". Only emitted when the fold surfaces an attack keyword the
+    # original text did not contain, so ordinary text with digits (dates,
+    # prices, version numbers) is never rewritten.
+    deleet = _deleet(text)
+    lower = text.lower()
+    if deleet != lower and any(
+        w in deleet and w not in lower
+        for w in ("ignore", "instructions", "previous", "prior", "system", "prompt",
+                  "password", "secret", "reveal", "override", "forget", "disregard")
+    ):
+        candidates.append(_candidate(source, "leetspeak", deleet, 1, 0.55))
+
     return candidates[:max_candidates]
+
+
+_LEET_MAP = str.maketrans({"4": "a", "3": "e", "1": "i", "0": "o", "5": "s",
+                           "7": "t", "9": "g", "$": "s", "@": "a", "8": "b"})
+
+
+def _deleet(text: str) -> str:
+    """Fold common digit/symbol letter-substitutions, lowercased.
+
+    "1" folds to "i" (not "l") — the dominant OCR/leet convention for injection
+    strings ("1gn0r3", "1n5truct10n5"); the rule regexes tolerate the odd
+    residual mismatch.
+    """
+    folded = text.lower().translate(_LEET_MAP)
+    # collapse "1gn0r3" spacing artifacts is out of scope; just the char fold
+    return folded
 
