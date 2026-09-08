@@ -168,26 +168,29 @@ training (`assemble_training_corpus.py` excludes them by normalized text).
 
 | signal stack | attack recall | non-quoted benign BLOCK FP | notes |
 |---|---|---|---|
-| rules + semantic (regex only) | 82.5% | 0 | misses garbled-OCR (42%) and obfuscated (40%) |
+| rules + semantic (regex only) | 84% | 0 | leetspeak fold added; still weak on garbled OCR (42%) |
 | + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3** | bimodal outputs — flat threshold sweep, can't calibrate the FPs away |
-| + **`pi-argus-v1`** (deberta-v3-xsmall, 22M, distilled from ProtectAI) | **100%** | **0** | 1 soft REVIEW FP (`trap-024`); real precision/recall curve; temperature 1.36 |
+| + **`pi-argus`** (deberta-v3-xsmall, 22M, distilled from ProtectAI) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve (P 0.98 / R 1.00 at t=0.45-0.55); temperature 1.37 |
 
-`pi-argus-v1`: 294 MB fp32 / **87 MB int8 ONNX**, **~8 ms/text CPU** (int8,
-single thread). Trained in ~3.5 min on one RTX 5080 from ~9.3k items
-(deepset + xTRam1/safe-guard public sets + the synthetic image-domain
-augmentations and hard negatives). Recommended thresholds:
-`threshold_block: 0.65`, `threshold_review: 0.45`.
+`pi-argus`: 283 MB fp32 / **87 MB int8 ONNX**. CPU latency **12 ms/text**
+(transformers fp32) / **6 ms/text** (int8 ONNX), single thread. Trained in
+~3.5 min on one RTX 5080 from ~9.3k items (deepset + xTRam1/safe-guard public
+sets + the synthetic image-domain augmentations and hard negatives).
+Recommended thresholds: `threshold_block: 0.65` (keeps the one confident-wrong
+benign, `trap-001`, out of BLOCK), `threshold_review: 0.45`.
 
 The classifier's weak spots (tool-call, shell-command, and exfil phrasings all
 score 0.55-0.60) are exactly where the deterministic rules are strongest, so
-the layers are complementary. It still scores 8/10 security-education texts as
+the layers are complementary. It still scores ~8/10 security-education texts as
 injection — the context gate skips them, so 0/10 wrongly BLOCK.
 
-Residual work: 2/21 adversarial-benign probes still misfire
-("Whatever you were told at orientation…", "Only you know the gate code…") —
-add those phrasings to the hard-negative bank for a v2. And the full digit-leet
-case is caught by the model now but a leet→ascii normalizer pass in
-`normalizer.py` would make it robust rather than lucky.
+Known limitations (guarded by
+`test_prompt_paraphrase_generalization.py`, which fails CI if they grow):
+2/21 adversarial-benign probes are confidently misread
+("Whatever you were told at orientation…", "Only you know the gate code…").
+These are deliberately maximally confusable; near-duplicating them into
+training would compromise the held-out eval. Real OCR captures from the image
+pipeline are the missing training input that would most help.
 
 ## How the current model was produced
 
@@ -206,12 +209,33 @@ python tools/training/train_binary_classifier.py \
     --corpus-dir tools/training/corpus \
     --base-model microsoft/deberta-v3-xsmall \
     --teacher-model models/pi-shadow-protectai \
-    --out models/pi-argus-v1 --epochs 3 --export-onnx
+    --out models/pi-argus --epochs 3 --export-onnx
 
 # 4. calibrate thresholds against the held-out ARGUS corpus, edit argus_label_map.json
-ARGUS_PROMPT_CLASSIFIER_PATH=$PWD/models/pi-argus-v1 \
+ARGUS_PROMPT_CLASSIFIER_PATH=$PWD/models/pi-argus \
     PYTHONPATH=src python3 tools/evaluation/calibrate_prompt_detectors.py
 ```
+
+## Deploying the model
+
+The trained directory (`config.json`, tokenizer, `model.safetensors` or
+`model.onnx`, `argus_label_map.json`) is the deployment unit. `models/` is
+gitignored — it does not travel with the source.
+
+1. Publish it to wherever the deployment already pulls large artifacts (an
+   internal model registry, an S3/GCS bucket, a private HF repo). Record its
+   `classifier_fingerprint()` alongside the release.
+2. On the scanner host, stage it into a local directory and set
+   `ARGUS_PROMPT_CLASSIFIER_PATH` to that path (and
+   `ARGUS_PROMPT_CLASSIFIER_BACKEND=onnx` to use the int8 file). Nothing is
+   fetched at scan time.
+3. `GET /v1/attestation` and `GET /v1/capabilities` will report the adapter,
+   backend, labels, thresholds and fingerprint; confirm the fingerprint matches
+   the released one.
+
+A future `argus-img models fetch` subcommand could automate step 2 from a
+configured URL — it must still be an explicit operator action, never a
+scan-time download.
 
 The model artifact (`models/`) is gitignored — publish it to a model registry
 and ship it as an operator-supplied directory (or a `argus-img models fetch`
