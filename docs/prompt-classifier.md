@@ -16,8 +16,16 @@ them and makes the BLOCK / REVIEW / allow decision. The classifier never decides
 anything on its own — a model probability is not proof.
 
 Pipeline wiring (`orchestration/pipeline.py`, "configured prompt-classifier
-adapter", plan.md §19.2): `rules → classifier → semantic`. Observations the rule
-engine already resolved as `CONFIRMED` are skipped by both later signals.
+adapter", plan.md §19.2): `rules → semantic → classifier`. Observations the rule
+engine resolved as `CONFIRMED` are skipped by the later signals.
+
+**Corroboration rule.** A classifier BLOCK-level score on an observation that
+*neither* the rules *nor* the heuristic scorer flagged is emitted as **REVIEW,
+not BLOCK**. A lone, uncorroborated model prediction — often on OCR-garbled
+benign text — must not single-handedly BLOCK an image. The classifier's solo
+signal means "a human should look"; classifier + rule/heuristic agreement means
+"block it". (Discovered by running the real pipeline: `clean.png` OCRs to
+"Nohidden instructions", which the model reads as an injection.)
 
 ## Why a model, and why a *small* one
 
@@ -166,52 +174,72 @@ adversarial-benign probes from
 `tests/unit/test_prompt_paraphrase_generalization.py`, none of which enter
 training (`assemble_training_corpus.py` excludes them by normalized text).
 
-| signal stack | attack recall | non-quoted benign BLOCK FP | notes |
+| signal stack | attack recall (flagged) | non-quoted benign BLOCK FP | notes |
 |---|---|---|---|
-| rules + semantic (regex only) | 84% | 0 | leetspeak fold added; still weak on garbled OCR (42%) |
+| rules + semantic (regex only) | 84% | 0 | leetspeak fold added; weak on garbled OCR (42%) |
 | + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3** | bimodal outputs — flat threshold sweep, can't calibrate the FPs away |
-| + **`pi-argus`** (deberta-v3-xsmall, 22M, distilled from ProtectAI) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve (P 0.98 / R 1.00 at t=0.45-0.55); temperature 1.37 |
+| + **`pi-argus`** (deberta-v3-xsmall, 22M, distilled) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve; corroboration rule keeps solo model catches at REVIEW |
+
+With the corroboration rule, the model's solo catches (garbled OCR, obfuscation
+the regexes miss) are **flagged as REVIEW**, and become BLOCK only when a rule
+or the heuristic scorer independently agrees. Overall attack recall (anything
+flagged) is 100%; garbled-OCR / obfuscated *BLOCK* rate is ~42-60% (the rest
+REVIEW).
 
 `pi-argus`: 283 MB fp32 / **87 MB int8 ONNX**. CPU latency **12 ms/text**
 (transformers fp32) / **6 ms/text** (int8 ONNX), single thread. Trained in
-~3.5 min on one RTX 5080 from ~9.3k items (deepset + xTRam1/safe-guard public
-sets + the synthetic image-domain augmentations and hard negatives).
-Recommended thresholds: `threshold_block: 0.65` (keeps the one confident-wrong
-benign, `trap-001`, out of BLOCK), `threshold_review: 0.45`.
+~3.5 min on one RTX 5080 from ~10k items:
 
-The classifier's weak spots (tool-call, shell-command, and exfil phrasings all
-score 0.55-0.60) are exactly where the deterministic rules are strongest, so
-the layers are complementary. It still scores ~8/10 security-education texts as
-injection — the context gate skips them, so 0/10 wrongly BLOCK.
+  - `deepset/prompt-injections` + `xTRam1/safe-guard` (chatbot-style, binary)
+  - synthetic image-domain augmentations + hard negatives (`build_prompt_corpus.py`)
+  - **~525 real-OCR captures** (`extract_ocr_captures.py` over the rendered
+    ARGUS eval corpus) — the actual scan-time text distribution, including
+    real OCR of security-training slides and rule-pattern docs
 
-Known limitations (guarded by
-`test_prompt_paraphrase_generalization.py`, which fails CI if they grow):
-2/21 adversarial-benign probes are confidently misread
-("Whatever you were told at orientation…", "Only you know the gate code…").
-These are deliberately maximally confusable; near-duplicating them into
-training would compromise the held-out eval. Real OCR captures from the image
-pipeline are the missing training input that would most help.
+Distilled (KL) from the ProtectAI teacher, temperature-calibrated.
+Thresholds: `threshold_block: 0.65`, `threshold_review: 0.45`.
+
+The classifier's weak spots (tool-call, shell, exfil phrasings at ~0.55-0.60)
+are exactly where the deterministic rules are strongest — complementary by
+construction.
+
+Known limitations (guarded by `test_prompt_paraphrase_generalization.py`):
+- 2/21 adversarial-benign probes confidently misread ("Whatever you were told
+  at orientation…", "Only you know the gate code…") — deliberately maximally
+  confusable; near-duplicating them into training would compromise the eval.
+- OCR that glues words ("Nohidden instructions" from `clean.png`) can push a
+  benign image to REVIEW. Bounded to REVIEW by the corroboration rule; a
+  better OCR engine or an OCR post-correction pass would remove it.
 
 ## How the current model was produced
 
 ```bash
-# 1. corpus (public sets + synthetic image-domain data, ARGUS corpus held out)
-python tools/training/assemble_training_corpus.py --out tools/training/corpus
-
-# 2. shadow the teacher, read the harness (optional but recommended)
+# 1. shadow the teacher, read the harness (optional but recommended)
 huggingface-cli download protectai/deberta-v3-base-prompt-injection-v2 \
     --local-dir models/pi-shadow-protectai
 ARGUS_PROMPT_CLASSIFIER_PATH=$PWD/models/pi-shadow-protectai \
     PYTHONPATH=src python3 tools/evaluation/calibrate_prompt_detectors.py
 
-# 3. train the small distilled student, export int8 ONNX
+# 2. real-OCR captures over a rendered image corpus (the scan-time distribution)
+python tools/evaluation/generate_mac_corpus.py \
+    --only prompt_injection --only benign_backgrounds --only contextual_negatives
+ARGUS_EASYOCR_MODEL_DIR=$PWD/models/easyocr \
+PYTHONPATH=src python3 tools/training/extract_ocr_captures.py \
+    --corpus ~/argus-eval-data/corpus \
+    --manifest ~/argus-eval-data/manifests/argus-eval.jsonl \
+    --out tools/training/corpus/ocr_captures.jsonl --merge-lines
+
+# 3. assemble the corpus (public + synthetic + OCR captures; ARGUS corpus held out)
+python tools/training/assemble_training_corpus.py --out tools/training/corpus
+
+# 4. train the small distilled student, export int8 ONNX
 python tools/training/train_binary_classifier.py \
     --corpus-dir tools/training/corpus \
     --base-model microsoft/deberta-v3-xsmall \
     --teacher-model models/pi-shadow-protectai \
     --out models/pi-argus --epochs 3 --export-onnx
 
-# 4. calibrate thresholds against the held-out ARGUS corpus, edit argus_label_map.json
+# 5. calibrate thresholds against the held-out ARGUS corpus, edit argus_label_map.json
 ARGUS_PROMPT_CLASSIFIER_PATH=$PWD/models/pi-argus \
     PYTHONPATH=src python3 tools/evaluation/calibrate_prompt_detectors.py
 ```

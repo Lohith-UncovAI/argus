@@ -141,3 +141,21 @@ def test_classifier_block_false_positives_on_adversarial_benign_stay_bounded():
     # "Only you know the gate code…" — a model can confidently misread these.
     # A regression past 2 means the model got materially worse.
     assert len(over) <= 2, "classifier BLOCK-FP on adversarial benign grew: %s" % over
+
+
+@pytest.mark.skipif(not prompt_classifier_available(), reason="no local classifier configured")
+def test_classifier_does_not_flag_security_education_text():
+    """Real OCR of security-training material that does NOT itself contain a
+    verbatim trigger string is benign — the model is trained on exactly this
+    (extract_ocr_captures.py) and must score it low. Text that literally
+    reproduces "ignore previous instructions" without quote marks is genuinely
+    ambiguous and left to the deterministic rules + context gate."""
+    from argus_img.detectors.prompt.classifier import LocalTransformerClassifier
+
+    clf = LocalTransformerClassifier.from_env()
+    for text in (
+        "This slide explains prompt injection attacks for awareness purposes.",
+        "Prompt injection awareness training module three of five.",
+        "The scanner flagged this image and routed it to the review queue.",
+    ):
+        assert clf.classify_sync(text).score < clf.label_map.threshold_review, text
