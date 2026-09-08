@@ -178,10 +178,36 @@ regression gate for any model or threshold change.
 
 ## Measured results (2026-09)
 
-Held-out evaluation = the 107-item `prompt_text_corpus.jsonl` plus the 21
-adversarial-benign probes from
-`tests/unit/test_prompt_paraphrase_generalization.py`, none of which enter
-training (`assemble_training_corpus.py` excludes them by normalized text).
+Held-out evaluation = the 132-item `prompt_text_corpus.jsonl` (direct /
+paraphrased / garbled-OCR / obfuscated / compound / tiled-split / multilingual
+attacks; plain / vocabulary-trap / document-style / multilingual / quoted-
+discussed benign) plus the 21 adversarial-benign probes from
+`tests/unit/test_prompt_paraphrase_generalization.py`. None of it enters
+training — `assemble_training_corpus.py` excludes every eval text by normalized
+form.
+
+**pipeline (rules + semantic + pi-argus), by category:**
+
+| category | flagged | BLOCK | | category | flagged | FP |
+|---|---|---|---|---|---|---|
+| direct_attack | 100% | 100% | | benign_plain | 0% | 0 |
+| paraphrased_attack | 100% | 100% | | benign_trap (29) | 0% | 0 |
+| obfuscated_attack | 100% | 100% | | multilingual_benign | 0% BLOCK | 1 REVIEW |
+| compound_attack | 100% | 100% | | document_style_benign | — | 1 REVIEW |
+| multilingual_attack | 100% | 14% | | quoted_discussed | 83% | REVIEW only |
+| garbled_ocr_attack | 100% | 58% | | | | |
+| tiled_split_attack | 50% | | | | | |
+
+Overall attack recall **98.6%** (the one miss is an isolated left-tile fragment
+"gnore all previ" — in a real tiled image both tiles' text lands in one OCR
+observation). The two REVIEW-band benign FPs (`doc-005`, `ml-b01`) are
+near-duplicates of training examples, held out, that the model doesn't fully
+generalise; the corroboration rule keeps them at REVIEW.
+
+Multilingual coverage is **partial** — the base tokenizer is English. Shared
+subwords plus ~30 in-language training examples get the 7-language attack set
+to 100% flagged, but if non-English injection is common in your threat model,
+retrain on a multilingual base (`microsoft/mdeberta-v3-base`, 86M).
 
 | signal stack | attack recall (flagged) | non-quoted benign FP (any) | notes |
 |---|---|---|---|
