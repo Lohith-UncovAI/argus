@@ -176,11 +176,11 @@ adversarial-benign probes from
 `tests/unit/test_prompt_paraphrase_generalization.py`, none of which enter
 training (`assemble_training_corpus.py` excludes them by normalized text).
 
-| signal stack | attack recall (flagged) | non-quoted benign BLOCK FP | notes |
+| signal stack | attack recall (flagged) | non-quoted benign FP (any) | notes |
 |---|---|---|---|
-| rules + semantic (regex only) | 86% | 0 | leetspeak fold + word re-segmentation; weak on garbled OCR |
-| + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3** | bimodal outputs — flat threshold sweep, can't calibrate the FPs away |
-| + **`pi-argus`** (deberta-v3-**small**, 44M, distilled) | **100%** | **0** | 1 soft REVIEW FP (`trap-001`); real precision/recall curve; corroboration rule keeps solo model catches at REVIEW |
+| rules + semantic (regex only) | 86% | 0 | leetspeak fold + word re-segmentation + OCR spell repair |
+| + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3 BLOCK** | bimodal outputs — flat threshold sweep, can't calibrate the FPs away |
+| + **`pi-argus`** (deberta-v3-**small**, 44M, distilled) | **100%** | **0** | real precision/recall curve; corroboration rule keeps solo model catches at REVIEW |
 
 deberta-v3-**small** (44M), not xsmall (22M): xsmall could not reliably handle
 negation ("no hidden instructions") or the hardest adversarial-benign probes
@@ -190,7 +190,7 @@ small). 44M is still small — ~5 ms/text int8 CPU.
 With the corroboration rule, the model's solo catches (garbled OCR, obfuscation
 the regexes miss) are **flagged as REVIEW**, and become BLOCK only when a rule
 or the heuristic scorer independently agrees. Overall attack recall (anything
-flagged) is 100%; garbled-OCR / obfuscated *BLOCK* rate is ~50-60% (the rest
+flagged) is 100%; garbled-OCR / obfuscated *BLOCK* rate is ~55-60% (the rest
 REVIEW).
 
 `pi-argus`: 570 MB fp32 / **173 MB int8 ONNX**. CPU latency ~10 ms/text
@@ -199,27 +199,38 @@ REVIEW).
 
   - `deepset/prompt-injections` + `xTRam1/safe-guard` (chatbot-style, binary)
   - synthetic image-domain augmentations + hard negatives (`build_prompt_corpus.py`)
-  - **~525 real-OCR captures** (`extract_ocr_captures.py` over the rendered
+  - **~750 real-OCR captures** (`extract_ocr_captures.py` over the rendered
     ARGUS eval corpus) — the actual scan-time text distribution, including
     real OCR of security-training slides and rule-pattern docs
 
 Distilled (KL) from the ProtectAI teacher, temperature-calibrated.
-Thresholds: `threshold_block: 0.65`, `threshold_review: 0.45`.
+Thresholds: `threshold_block: 0.65`, `threshold_review: 0.55` (the model's
+negation-uncertainty floor sits below the flag line; the only corpus attacks
+in 0.45-0.55 are all rule/semantic-covered).
 
-The classifier's weak spots (tool-call, shell, exfil phrasings at ~0.55-0.60)
-are exactly where the deterministic rules are strongest — complementary by
-construction.
+### The OCR-noise problem, and how it is handled
+
+The text the classifier sees is real OCR — often over transform variants of the
+image. Two failure modes and their fixes:
+
+* **Word-gluing** ("Nohidden instructions"). `decoders._resegment` re-splits
+  glued tokens; `prefer_corrected_transcriptions` makes the classifier score
+  the readable form.
+* **Transform gibberish** ("Quareni} cashone Voldde) jsluDti@jur" from an
+  aggressive channel view), on which the model reports a meaningless ~0.6.
+  A candidate is dropped only when it is *both* mostly non-words (wordninja
+  vocab check) *and* scored below 0.90 — a confident garbled-attack read is
+  kept, unconfident noise is not. `decoders._ocr_spell_repair` recovers the
+  genuinely-corrupted attacks ("prornpt" → "prompt") so they stay above the
+  gate.
+
+`clean.png` (caption "No hidden instructions") now scans to
+`ALLOW_RECONSTRUCTED_ONLY` with the classifier deployed.
 
 Known limitations (guarded by `test_prompt_paraphrase_generalization.py`):
-- A handful of the adversarial-benign probes score in the 0.45-0.65 REVIEW
-  band ("comply with what follows", "Whatever you were told at orientation…").
-  None reach BLOCK; the corroboration rule keeps them at REVIEW. These are
-  deliberately maximally confusable — a redirect phrase in a benign context.
-- `clean.png` OCRs to the glued token "Nohidden instructions"; word
-  re-segmentation recovers "No hidden instructions" (~0.45) but the glued form
-  still scores ~0.55, so `clean.png` lands at REVIEW, not ALLOW. Bounded to
-  REVIEW by the corroboration rule. A better OCR engine (tesseract) or more
-  negation training data would remove it.
+- A few adversarial-benign probes score in the 0.55-0.65 band ("comply with
+  what follows", "Whatever you were told at orientation…"). None reach BLOCK;
+  the corroboration rule keeps them at REVIEW.
 
 ## How the current model was produced
 
