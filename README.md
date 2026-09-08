@@ -39,9 +39,11 @@ Implemented baseline:
 - Tesseract OCR adapter when the local binary is installed.
 - pyzbar QR/barcode adapter when local libraries are available.
 - YAML prompt-injection rules and deterministic intent context.
+- CPU-only heuristic injection scorer (token/bigram/structural/paraphrase banks).
+- Optional local ML prompt-injection classifier (`ARGUS_PROMPT_CLASSIFIER_PATH`); evidence only, `NOT_TESTED` when unconfigured. See `docs/prompt-classifier.md`.
 - Privacy and phishing heuristics.
 - Structural trailing-byte detection and basic entropy summary.
-- Null/mock interfaces for prompt classifiers, VLMs, watermark detectors, and steganalysis models.
+- Null/mock interfaces for VLMs, watermark detectors, and steganalysis models.
 
 Optional tools such as ExifTool, ClamAV, YARA, Binwalk, zsteg, C2PA, PaddleOCR, and OpenCV degrade to explicit `UNSUPPORTED` or `NOT_TESTED` statuses when unavailable. ExifTool output is parsed locally in JSON mode and precise GPS values are not returned by default.
 

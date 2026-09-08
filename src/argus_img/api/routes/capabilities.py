@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from argus_img.artifacts.store import ArtifactStore
 from argus_img.core.config import load_config
 from argus_img.core.enums import ScanMode, UseProfile
+from argus_img.detectors.prompt.classifier import classifier_status
 from argus_img.intake.format_policy import ALLOWED_RASTER_FORMATS
 
 router = APIRouter()
@@ -29,6 +30,7 @@ def capabilities():
         "modes": [mode.value for mode in ScanMode],
         "profiles": [profile.value for profile in UseProfile],
         "optional_tools": optional_tools,
+        "model_adapters": {"prompt_classifier": classifier_status()},
         "storage": store.storage_status(config.storage.maximum_total_store_bytes),
         "runtime_network_dependency": False,
         "gpu_required": False,

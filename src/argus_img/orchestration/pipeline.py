@@ -49,6 +49,8 @@ from argus_img.detectors.ocr.vlm_detector import analyze_with_vlm, vlm_available
 from argus_img.detectors.ocr.tesseract import analyze_with_tesseract
 from argus_img.detectors.phishing import analyze_phishing
 from argus_img.detectors.privacy import analyze_privacy
+from argus_img.detectors.prompt.classify import analyze_classifier
+from argus_img.detectors.prompt.classifier import prompt_classifier_available
 from argus_img.detectors.prompt.decoders import derive_text_candidates
 from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import analyze_semantic
@@ -667,10 +669,61 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         # avoid duplicating findings and breaking transformation-trace contracts.
         rule_covered_obs = {obs_id for f in prompt_findings for obs_id in f.observation_ids
                             if f.state == EpistemicState.CONFIRMED}
+
+        # Optional local ML classifier — evidence only, capped at HIGHLY_LIKELY.
+        # Absent a configured local model this is NOT_TESTED and the two signals
+        # above are unchanged.
+        classifier_covered_obs: set = set()
+        if prompt_classifier_available():
+            t0_classifier = datetime.now(timezone.utc)
+            classifier_findings = analyze_classifier(
+                observations, scan_id, include_raw_text=False,
+                skip_observation_ids=rule_covered_obs,
+            )
+            findings.extend(classifier_findings)
+            # A BLOCK-level model finding already covers the observation; let the
+            # heuristic scorer skip it, mirroring the rule -> semantic hand-off.
+            classifier_covered_obs = {
+                obs_id for f in classifier_findings for obs_id in f.observation_ids
+                if f.state == EpistemicState.HIGHLY_LIKELY
+            }
+            detector_executions.append(
+                _execution(
+                    "detector:prompt-classifier",
+                    DetectorStatus.SUCCESS if classifier_findings else DetectorStatus.NO_EVIDENCE,
+                    EpistemicState.HIGHLY_LIKELY if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND,
+                    family="prompt",
+                    category="prompt_injection",
+                    required=False,
+                    started_at=t0_classifier,
+                )
+            )
+            module_status["prompt_classifier"] = ModuleStatus(
+                name="prompt_classifier",
+                status=EpistemicState.HIGHLY_LIKELY if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND,
+            )
+        else:
+            detector_executions.append(
+                _execution(
+                    "detector:prompt-classifier",
+                    DetectorStatus.NOT_TESTED,
+                    EpistemicState.NOT_TESTED,
+                    family="prompt",
+                    category="prompt_injection",
+                    required=False,
+                    reason="no_local_model_configured",
+                )
+            )
+            module_status["prompt_classifier"] = ModuleStatus(
+                name="prompt_classifier",
+                status=EpistemicState.NOT_TESTED,
+                reason="no_local_model_configured",
+            )
+
         t0_semantic = datetime.now(timezone.utc)
         semantic_findings = analyze_semantic(
             observations, scan_id, include_raw_text=False,
-            skip_observation_ids=rule_covered_obs,
+            skip_observation_ids=rule_covered_obs | classifier_covered_obs,
         )
         findings.extend(semantic_findings)
         detector_executions.append(

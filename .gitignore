@@ -36,3 +36,9 @@ memory/
 
 # Hugging Face downloaded model weights
 .cache/
+
+# Trained / exported prompt-injection classifier artifacts
+models/
+tools/training/**/_hf/
+tools/evaluation/corpus/prompt_corpus.*.jsonl
+tools/evaluation/corpus/prompt_corpus.manifest.json

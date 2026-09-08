@@ -4,6 +4,8 @@ ARGUS-IMG separates the original-byte path from the decoded-pixel path.
 
 The original-byte path performs intake validation, content-addressed quarantine, format detection, structural checks, metadata inspection, provenance status, optional malware adapters, and steganography signals. The decoded-pixel path reconstructs bounded pixels into new images, generates deterministic transformations, runs OCR and QR decoding, and sends text evidence into prompt, privacy, phishing, and policy analysis.
 
+The prompt-injection text layer has three signals: a deterministic regex rule bundle (`CONFIRMED`), a CPU-only heuristic scorer (`HIGHLY_LIKELY`), and an optional local ML classifier (`HIGHLY_LIKELY`, `NOT_TESTED` when unconfigured). All produce evidence; the deterministic policy engine decides. See `docs/prompt-classifier.md`.
+
 Trust boundaries:
 
 - Uploaded bytes are hostile.

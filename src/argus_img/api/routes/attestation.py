@@ -8,6 +8,7 @@ from argus_img import __version__
 from argus_img.core.config import config_hash, load_config, read_config_text
 from argus_img.core.hashing import sha256_bytes
 from argus_img.core.offline_guard import OfflineGuard
+from argus_img.detectors.prompt.classifier import classifier_status
 
 router = APIRouter()
 
@@ -89,7 +90,7 @@ def attestation():
         "installed_optional_tools": installed_tools,
         "model_adapters_configured": {
             "visual": "NullVisualAnalyzer",
-            "prompt_classifier": "NullPromptClassifier",
+            "prompt_classifier": classifier_status(),
         },
         # Verified network-isolation facts (not an unconditional success claim).
         "network_offline_configuration_state": network_state,
