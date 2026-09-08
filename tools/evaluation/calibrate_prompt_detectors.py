@@ -127,7 +127,11 @@ def run_pipeline(item: CorpusItem) -> PipelineOutcome:
     semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs)
     semantic_action = _strongest_action(f.recommended_action for f in semantic_findings) if semantic_findings else None
 
-    combined = rule_action or classifier_action or semantic_action
+    # The real pipeline collects findings from all three signals and the policy
+    # engine takes the strongest — a classifier REVIEW never masks a semantic
+    # BLOCK on the same text.
+    _rank = {None: 0, "REVIEW": 1, "BLOCK": 2}
+    combined = max((rule_action, classifier_action, semantic_action), key=lambda a: _rank.get(a, 0))
     return PipelineOutcome(
         rule_action=rule_action,
         semantic_action=semantic_action,
