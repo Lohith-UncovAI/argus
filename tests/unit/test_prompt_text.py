@@ -36,6 +36,30 @@ def test_leetspeak_fold_ignores_benign_digits():
         assert not any(d.transformation == "leetspeak" for d in derive_text_candidates(obs))
 
 
+def _obs(text: str) -> TextObservation:
+    return TextObservation(observation_id="o", source_artifact_id="a", detector_id="d",
+                           raw_text=text, normalized_text=text, engine="test")
+
+
+def test_resegment_splits_ocr_glued_words():
+    pytest = __import__("pytest")
+    pytest.importorskip("wordninja")
+    derived = derive_text_candidates(_obs("Nohidden instructions and Forgetearlier rules"))
+    reseg = [d for d in derived if d.transformation == "resegment"]
+    assert reseg and "no hidden" in reseg[0].text.lower()
+    assert "forget earlier" in reseg[0].text.lower()
+
+
+def test_resegment_leaves_real_words_and_identifiers_alone():
+    pytest = __import__("pytest")
+    pytest.importorskip("wordninja")
+    for text in ("The configuration file has no instructions.",
+                 "Set PYTHONPATH and run the notebook.",
+                 "A golden retriever running across a field at sunset."):
+        assert not any(d.transformation == "resegment"
+                       for d in derive_text_candidates(_obs(text))), text
+
+
 def test_base64_candidate_decoding_is_bounded_and_printable():
     obs = TextObservation(
         observation_id="observation:test",
