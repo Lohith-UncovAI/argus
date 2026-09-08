@@ -39,8 +39,8 @@ Implemented baseline:
 - Tesseract OCR adapter when the local binary is installed.
 - pyzbar QR/barcode adapter when local libraries are available.
 - YAML prompt-injection rules and deterministic intent context.
-- CPU-only heuristic injection scorer (token/bigram/structural/paraphrase banks).
-- Optional local ML prompt-injection classifier (`ARGUS_PROMPT_CLASSIFIER_PATH`); evidence only, `NOT_TESTED` when unconfigured. See `docs/prompt-classifier.md`.
+- CPU-only heuristic injection scorer (token/bigram/structural/paraphrase banks), with text-candidate decoders (leetspeak, OCR word re-segmentation, de-spacing, OCR spell-repair) and geometry-gated reassembly of injections split across image regions.
+- Optional local ML prompt-injection classifier (`ARGUS_PROMPT_CLASSIFIER_PATH`); evidence only, corroboration-gated for BLOCK, `NOT_TESTED` when unconfigured. Reproducible build (`tools/training/build_model.py`) and deploy preflight. See `docs/prompt-classifier.md`.
 - Privacy and phishing heuristics.
 - Structural trailing-byte detection and basic entropy summary.
 - Null/mock interfaces for VLMs, watermark detectors, and steganalysis models.
