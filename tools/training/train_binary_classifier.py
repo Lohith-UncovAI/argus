@@ -30,6 +30,7 @@ import argparse
 import json
 import pathlib
 import sys
+import tempfile
 
 ARGUS_LABEL_MAP = {
     "problem_type": "single_label_classification",
@@ -119,9 +120,9 @@ def main(argv) -> int:
 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.base_model, num_labels=2,
-        id2label={0: "SAFE", 1: "INJECTION"}, label2id={"SAFE": 0, "INJECTION": 1})
+        id2label={0: "SAFE", 1: "INJECTION"}, label2id={"SAFE": 0, "INJECTION": 1}).float()
 
-    class_weight = torch.tensor([1.0, (len(tr) - n_inj) / max(n_inj, 1)], dtype=torch.float32)
+    class_weight = torch.tensor([1.0, (len(tr_os) - n_inj) / max(n_inj, 1)], dtype=torch.float32)
     print("class weight:", [round(w, 3) for w in class_weight.tolist()])
 
     teacher = None
@@ -161,7 +162,9 @@ def main(argv) -> int:
         learning_rate=args.lr, warmup_ratio=0.1, eval_strategy="epoch",
         save_strategy="epoch", load_best_model_at_end=True, metric_for_best_model="f1",
         greater_is_better=True, logging_steps=50,
-        fp16=torch.cuda.is_available(), report_to=[], seed=args.seed)
+        bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+        fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
+        report_to=[], seed=args.seed)
 
     trainer = DistilTrainer(model=model, args=targs, train_dataset=d_tr, eval_dataset=d_va,
                             processing_class=tok, compute_metrics=metrics)
@@ -176,7 +179,7 @@ def main(argv) -> int:
     log_t = torch.zeros(1, requires_grad=True)
     opt = torch.optim.LBFGS([log_t], lr=0.1, max_iter=60)
     opt.step(lambda: _temp_closure(opt, log_t, logits, labels, nn))
-    temperature = float(log_t.exp())
+    temperature = float(log_t.exp().detach())
     print("fitted temperature:", round(temperature, 3))
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -208,22 +211,33 @@ def _temp_closure(opt, log_t, logits, labels, nn):
 
 
 def _export_onnx(out: pathlib.Path) -> None:
-    try:
-        from optimum.onnxruntime import ORTModelForSequenceClassification, ORTQuantizer
-        from optimum.onnxruntime.configuration import AutoQuantizationConfig
-    except ImportError:
-        print("optimum not installed — skipping ONNX export")
-        return
-    m = ORTModelForSequenceClassification.from_pretrained(str(out), export=True)
-    m.save_pretrained(str(out))
-    q = ORTQuantizer.from_pretrained(str(out))
-    q.quantize(save_dir=str(out),
-               quantization_config=AutoQuantizationConfig.avx512_vnni(is_static=False, per_channel=True))
-    for cand in ("model_quantized.onnx", "model.onnx"):
-        p = out / cand
-        if p.is_file():
-            p.replace(out / "model.onnx")
-            break
+    import torch
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(str(out), local_files_only=True)
+    model = AutoModelForSequenceClassification.from_pretrained(str(out), local_files_only=True).float().eval()
+    encoded = tokenizer("Offline image text analysis", return_tensors="pt")
+    input_names = list(encoded)
+
+    class LogitsOnly(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = model
+
+        def forward(self, *inputs):
+            return self.model(**dict(zip(input_names, inputs))).logits
+
+    dynamic_axes = {name: {0: "batch", 1: "sequence"} for name in input_names}
+    dynamic_axes["logits"] = {0: "batch"}
+    with tempfile.TemporaryDirectory(dir=out) as temporary:
+        full_precision = pathlib.Path(temporary) / "model.onnx"
+        with torch.no_grad():
+            torch.onnx.export(LogitsOnly(), tuple(encoded.values()), str(full_precision),
+                              input_names=input_names, output_names=["logits"],
+                              dynamic_axes=dynamic_axes, opset_version=17, dynamo=False)
+        quantize_dynamic(str(full_precision), str(out / "model.onnx"),
+                         weight_type=QuantType.QInt8, per_channel=True)
     print("exported int8 ONNX -> %s/model.onnx" % out)
 
 

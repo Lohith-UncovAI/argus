@@ -113,6 +113,85 @@ def test_label_map_binary_fallback_when_no_config(tmp_path):
     assert lm.spec(1).benign is False
 
 
+@pytest.mark.parametrize("name", ["UNSAFE", "NOT_SAFE", "unclean", "not_benign"])
+def test_attack_label_names_are_not_benign(tmp_path, name):
+    (tmp_path / "config.json").write_text(json.dumps({
+        "id2label": {"0": "SAFE", "1": name},
+    }))
+    assert load_label_map(tmp_path, None).spec(1).benign is False
+
+
+def test_status_distinguishes_invalid_path_from_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path / "missing"))
+    status = classifier_status()
+    assert status["configured"] is True
+    assert status["available"] is False
+    assert "not a directory" in status["reason"]
+
+
+def test_unknown_backend_is_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path))
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_BACKEND", "typo")
+    assert prompt_classifier_available() is False
+
+
+def test_classifier_cache_tracks_backend_and_label_map(monkeypatch, tmp_path):
+    from argus_img.detectors.prompt.classifier import LocalTransformerClassifier
+
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path))
+    monkeypatch.delenv("ARGUS_PROMPT_CLASSIFIER_LABELMAP", raising=False)
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_BACKEND", "transformers")
+    first = LocalTransformerClassifier.from_env()
+    assert LocalTransformerClassifier.from_env() is first
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_BACKEND", "onnx")
+    second = LocalTransformerClassifier.from_env()
+    assert second is not first
+    assert second.backend == "onnx"
+    (tmp_path / "config.json").write_text(json.dumps({
+        "id2label": {"0": "SAFE", "1": "JAILBREAK"},
+    }))
+    third = LocalTransformerClassifier.from_env()
+    assert third is not second
+    assert third.label_map.spec(1).name == "JAILBREAK"
+
+
+@pytest.mark.parametrize("logits", [[float("nan"), 1.0], [0.0, float("inf")], [], [1.0]])
+def test_invalid_model_outputs_report_error(tmp_path, monkeypatch, logits):
+    from argus_img.detectors.prompt.classifier import LocalTransformerClassifier
+
+    classifier = LocalTransformerClassifier(tmp_path, load_label_map(tmp_path, None))
+    monkeypatch.setattr(classifier, "_logits", lambda text: logits)
+    assert classifier.classify_sync("ordinary text").status == "ERROR"
+
+
+def test_adapter_exposes_inference_errors():
+    class BrokenClassifier:
+        def classify_sync(self, text):
+            return PromptClassification(status="ERROR", reason="runtime failed")
+
+    errors = []
+    assert analyze_classifier([_obs("ordinary text")], "scan-errors",
+                              classifier=BrokenClassifier(), errors=errors) == []
+    assert errors == ["runtime failed"]
+
+
+def test_invalid_configuration_does_not_crash_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path))
+    (tmp_path / "argus_label_map.json").write_text("invalid json")
+    status = classifier_status()
+    assert status["available"] is False
+    assert any("label map failed" in problem for problem in status["preflight_problems"])
+
+
+def test_string_false_cannot_turn_attack_label_benign(tmp_path):
+    (tmp_path / "argus_label_map.json").write_text(json.dumps({
+        "labels": {"0": {"name": "SAFE", "benign": True},
+                   "1": {"name": "INJECTION", "benign": "false"}},
+    }))
+    with pytest.raises(ValueError, match="JSON booleans"):
+        load_label_map(tmp_path, None)
+
+
 def test_label_map_parses_calibration(tmp_path):
     override = tmp_path / "labels.json"
     override.write_text(json.dumps({
@@ -160,6 +239,23 @@ def test_fingerprint_stable_and_sensitive(tmp_path):
     assert fp1 == fp2 and fp1.startswith("sha256:")
     (tmp_path / "config.json").write_text('{"id2label": {"0": "SAFE", "1": "JAILBREAK"}}')
     assert classifier_fingerprint(tmp_path) != fp1
+
+
+def test_fingerprint_detects_same_size_weight_replacement(tmp_path):
+    weights = tmp_path / "model.onnx"
+    weights.write_bytes(b"original")
+    original = classifier_fingerprint(tmp_path)
+    weights.write_bytes(b"modified")
+    assert classifier_fingerprint(tmp_path) != original
+
+
+def test_fingerprint_tracks_external_label_map(tmp_path, monkeypatch):
+    override = tmp_path / "override.json"
+    override.write_text("{}")
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_LABELMAP", str(override))
+    original = classifier_fingerprint(tmp_path)
+    override.write_text('{"threshold_review": 0.9}')
+    assert classifier_fingerprint(tmp_path) != original
 
 
 def test_classifier_status_unconfigured(monkeypatch):

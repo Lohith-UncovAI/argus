@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - name: Install OCR runtime
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Verify schemas are current

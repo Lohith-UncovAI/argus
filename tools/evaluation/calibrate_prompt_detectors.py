@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import argparse
 import pathlib
 import sys
 from dataclasses import dataclass, field
@@ -212,7 +213,7 @@ def report_pipeline_behaviour(items: List[CorpusItem]) -> Dict[str, object]:
             })
 
     summary_lines = []
-    wiring = "rule engine -> classifier -> semantic scorer" if classifier_on else "rule engine -> semantic scorer"
+    wiring = "rule engine -> semantic scorer -> classifier" if classifier_on else "rule engine -> semantic scorer"
     summary_lines.append("=== Pipeline behaviour by corpus category (%s, as wired in orchestration/pipeline.py) ===" % wiring)
     if not classifier_on:
         summary_lines.append("(prompt classifier: not configured — set ARGUS_PROMPT_CLASSIFIER_PATH to include it)")
@@ -359,10 +360,13 @@ def report_classifier_sweep(items: List[CorpusItem]) -> Optional[Dict[str, objec
 
     def clf_score(text: str) -> float:
         r = _CLASSIFIER.classify_sync(text)
-        return r.score if r.status == "SUCCESS" else 0.0
+        if r.status != "SUCCESS":
+            raise RuntimeError("classifier evaluation failed: %s" % (r.reason or r.status))
+        return r.score
 
     scores = {i.id: clf_score(i.text) for i in items}
-    thresholds = [round(t * 0.05, 2) for t in range(1, 20)]
+    operating_threshold = _CLASSIFIER.label_map.threshold_review
+    thresholds = sorted(set([round(t * 0.05, 2) for t in range(1, 20)] + [operating_threshold]))
     rows = []
     best = None
     for t in thresholds:
@@ -395,28 +399,36 @@ def report_classifier_sweep(items: List[CorpusItem]) -> Optional[Dict[str, objec
     print("Quoted/discussed items scored >=0.50 by the raw model: %d/%d %s" % (
         len(quoted_hi), len(quoted), quoted_hi or ""))
     return {"sweep": rows, "best_f1_threshold_metrics": best,
+            "operating_threshold_metrics": next(row for row in rows if row["threshold"] == operating_threshold),
             "quoted_discussed_high_raw_score": quoted_hi}
 
 
 def main() -> None:
-    items = load_corpus(CORPUS_PATH)
-    print("Loaded %d labeled corpus items from %s\n" % (len(items), CORPUS_PATH.relative_to(REPO_ROOT)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", type=pathlib.Path, default=CORPUS_PATH)
+    parser.add_argument("--output", type=pathlib.Path,
+                        default=RESULTS_DIR / "prompt_calibration_report.json")
+    args = parser.parse_args()
+    corpus_path = args.corpus.resolve()
+    items = load_corpus(corpus_path)
+    print("Loaded %d labeled corpus items from %s\n" % (len(items), corpus_path))
 
     pipeline_report = report_pipeline_behaviour(items)
     sweep_report = report_threshold_sweep(items)
     classifier_report = report_classifier_sweep(items)
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULTS_DIR / "prompt_calibration_report.json"
+    out_path = args.output
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({
         "classifier_configured": _CLASSIFIER is not None,
+        "model_fingerprint": classifier_fingerprint() if _CLASSIFIER is not None else None,
         "classifier_sweep": classifier_report,
-        "corpus_path": str(CORPUS_PATH.relative_to(REPO_ROOT)),
+        "corpus_path": str(corpus_path),
         "corpus_size": len(items),
         "pipeline_behaviour": pipeline_report,
         "threshold_sweep": sweep_report,
     }, indent=2))
-    print("\nFull report written to %s" % out_path.relative_to(REPO_ROOT))
+    print("\nFull report written to %s" % out_path)
 
 
 if __name__ == "__main__":

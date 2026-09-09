@@ -3,7 +3,7 @@ text observations and emit ``DetectorFinding``s.
 
 Wired into ``orchestration/pipeline.py`` as the "configured prompt-classifier
 adapter" step (plan.md §19.2 / pipeline step 18), between the deterministic rule
-bundle and the heuristic semantic scorer.
+bundle and the privacy detector, after the heuristic semantic scorer.
 
 Design invariants:
   * The classifier is *evidence only*. Findings cap at ``HIGHLY_LIKELY`` —
@@ -65,6 +65,7 @@ def analyze_classifier(
     skip_observation_ids: Optional[set] = None,
     corroborated_observation_ids: Optional[set] = None,
     derived_texts: Optional[dict] = None,
+    errors: Optional[List[str]] = None,
 ) -> List[DetectorFinding]:
     """Score text observations with the local ML classifier.
 
@@ -110,8 +111,9 @@ def analyze_classifier(
         for c in candidates:
             r = clf.classify_sync(c)
             if r.status != "SUCCESS":
+                if errors is not None:
+                    errors.append(r.reason or r.status)
                 continue
-            # Drop OCR gibberish the model is not confident about.
             if _prose_ratio(c) < _MIN_PROSE_RATIO:
                 continue
             scored.append(r)

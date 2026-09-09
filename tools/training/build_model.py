@@ -30,6 +30,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -38,14 +39,13 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 CORPUS_DIR = REPO_ROOT / "tools" / "training" / "corpus"
 HELD_OUT = REPO_ROOT / "tools" / "evaluation" / "corpus" / "prompt_text_corpus.jsonl"
-CALIB_REPORT = REPO_ROOT / "tools" / "evaluation" / "results" / "prompt_calibration_report.json"
 
 # A model below any of these on the held-out corpus is a regression — do not ship.
 FLOORS = {
     "flat_attack_recall_pct": 97.0,      # tls-001 (no geometry in the flat harness) may miss
     "benign_plain_blocked": 0,
     "benign_trap_blocked": 0,
-    "classifier_best_f1_recall": 0.95,
+    "classifier_operating_recall": 0.95,
     "classifier_benign_fp_max": 2,       # doc-005 / ml-b01, both corroboration-bounded to REVIEW
 }
 
@@ -94,6 +94,21 @@ def _git_sha() -> str:
 
 
 def _check_floors(report: dict) -> list[str]:
+    try:
+        if report.get("classifier_configured") is not True:
+            return ["classifier was not configured during evaluation"]
+        pipeline = report["pipeline_behaviour"]
+        operating = report["classifier_sweep"]["operating_threshold_metrics"]
+        values = [pipeline["overall_recall_pct"], operating["recall"], operating["fp"]]
+        values.extend(pipeline["by_category"][category]["blocked"]
+                      for category in ("benign_plain", "benign_trap"))
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) or value < 0 for value in values):
+            return ["evaluation contains invalid or non-finite metrics"]
+        if values[0] > 100 or values[1] > 1 or any(value != int(value) for value in values[2:]):
+            return ["evaluation metrics are outside their valid ranges"]
+    except (KeyError, TypeError):
+        return ["evaluation is missing required classifier or category metrics"]
     pb = report["pipeline_behaviour"]
     by_cat = pb["by_category"]
     cs = report["classifier_sweep"]
@@ -108,14 +123,13 @@ def _check_floors(report: dict) -> list[str]:
         if blocked > FLOORS["%s_blocked" % cat]:
             failures.append("%s produced %d BLOCK(s)" % (cat, blocked))
 
-    best = cs.get("best_f1_threshold_metrics") or {}
+    best = cs["operating_threshold_metrics"]
     clf_recall = float(best.get("recall", 0.0))
-    if clf_recall < FLOORS["classifier_best_f1_recall"]:
-        failures.append("classifier best-F1 recall %.3f < %.3f" % (clf_recall, FLOORS["classifier_best_f1_recall"]))
-    # false positives at the best-F1 point
+    if clf_recall < FLOORS["classifier_operating_recall"]:
+        failures.append("classifier operating recall %.3f < %.3f" % (clf_recall, FLOORS["classifier_operating_recall"]))
     fp = int(round(best.get("fp", best.get("false_positives", 0)) or 0))
     if fp > FLOORS["classifier_benign_fp_max"]:
-        failures.append("classifier benign FP %d > %d at best-F1 threshold" % (fp, FLOORS["classifier_benign_fp_max"]))
+        failures.append("classifier benign FP %d > %d at operating threshold" % (fp, FLOORS["classifier_benign_fp_max"]))
     return failures
 
 
@@ -137,6 +151,8 @@ def main(argv) -> int:
     args = ap.parse_args(argv)
 
     out = args.out.resolve()
+    if out.exists() and any(out.iterdir()) and not args.skip_train:
+        ap.error("--out must be empty for a new build; use a separate candidate directory")
     py = sys.executable
     steps: list[dict] = []
 
@@ -191,12 +207,13 @@ def main(argv) -> int:
                           "temperature": m.get("temperature")})
 
     # 4. Evaluate against the held-out corpus --------------------------------
-    ev = [py, "tools/evaluation/calibrate_prompt_detectors.py"]
+    evaluation_path = out / "EVALUATION.json"
+    ev = [py, "tools/evaluation/calibrate_prompt_detectors.py", "--output", str(evaluation_path)]
     _run(ev, env={"ARGUS_PROMPT_CLASSIFIER_PATH": str(out),
                   "ARGUS_PROMPT_CLASSIFIER_BACKEND": "onnx",
                   "PYTHONPATH": str(REPO_ROOT / "src")})
-    steps.append({"step": "calibrate_prompt_detectors", "argv": []})
-    report = json.loads(CALIB_REPORT.read_text())
+    steps.append({"step": "calibrate_prompt_detectors", "argv": ev[2:]})
+    report = json.loads(evaluation_path.read_text())
 
     # 5. Fingerprint + provenance -----------------------------------------------
     sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -204,6 +221,8 @@ def main(argv) -> int:
     from argus_img.detectors.prompt.classifier import classifier_fingerprint, classifier_status
 
     failures = _check_floors(report)
+    if report.get("model_fingerprint") != classifier_fingerprint():
+        failures.append("evaluated model fingerprint differs from the build artifact")
     pb = report["pipeline_behaviour"]
     provenance = {
         "built_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
@@ -220,6 +239,7 @@ def main(argv) -> int:
             "held_out_false_positive_rate_pct": pb["overall_false_positive_rate_pct"],
             "missed_attacks": [m["id"] for m in pb["missed_attacks"]],
             "classifier_best_f1": report["classifier_sweep"].get("best_f1_threshold_metrics"),
+            "classifier_operating": report["classifier_sweep"].get("operating_threshold_metrics"),
             "by_category": pb["by_category"],
         },
         "fingerprint": classifier_fingerprint(),
@@ -229,6 +249,7 @@ def main(argv) -> int:
         "floor_failures": failures,
     }
 
+    (out / "BUILD_REPORT.json").write_text(json.dumps(provenance, indent=2))
     if failures and not args.allow_below_floor:
         print("\nMETRICS FLOOR NOT MET:")
         for f in failures:

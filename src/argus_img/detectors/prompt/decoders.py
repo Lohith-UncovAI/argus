@@ -188,7 +188,7 @@ _OCR_CONFUSIONS = [
 
 
 def _ocr_spell_repair(text: str):
-    """Repair single OCR-confusion errors that turn a word into gibberish.
+    """Repair single OCR-confusion or internal transposition errors.
 
     For each non-word token, try each confusion once; if exactly one produces a
     dictionary word, take it. Returns the repaired string, or None if nothing
@@ -212,6 +212,12 @@ def _ocr_spell_repair(text: str):
                 cand = core.replace(a, b, 1)
                 if cand in vocab and cand != core:
                     fixes.add(cand)
+        if len(core) >= 5:
+            for position in range(1, len(core) - 2):
+                candidate = (core[:position] + core[position + 1] + core[position]
+                             + core[position + 2:])
+                if candidate in vocab and candidate != core:
+                    fixes.add(candidate)
         if len(fixes) == 1:
             out.append(fixes.pop())
             changed = True
@@ -341,4 +347,3 @@ def layout_join_texts(
         for _cy, _cx, _h, _t, obs_id in ordered:
             out.setdefault(obs_id, []).extend(variants)
     return out
-

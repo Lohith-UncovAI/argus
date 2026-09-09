@@ -18,6 +18,7 @@ from argus_img.workers.errors import WorkerCrashError, WorkerTimeoutError
 from argus_img.core.hashing import sha256_file
 from argus_img.core.models import (
     Artifact,
+    ArtifactTransformation,
     CategoryAssessment,
     CoverageAssessment,
     DetectorExecution,
@@ -50,7 +51,7 @@ from argus_img.detectors.ocr.tesseract import analyze_with_tesseract
 from argus_img.detectors.phishing import analyze_phishing
 from argus_img.detectors.privacy import analyze_privacy
 from argus_img.detectors.prompt.classify import analyze_classifier
-from argus_img.detectors.prompt.classifier import prompt_classifier_available
+from argus_img.detectors.prompt.classifier import prompt_classifier_available, classifier_status
 from argus_img.detectors.prompt.decoders import derive_text_candidates, layout_join_texts
 from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import analyze_semantic
@@ -64,8 +65,6 @@ from argus_img.detectors.watermarks.visible import analyze_visible_watermarks
 from argus_img.evidence.assessment import build_assessments
 from argus_img.evidence.deduplication import deduplicate_findings
 from argus_img.evidence.graph import build_evidence_graph
-from argus_img.intake.mime import detect_magic
-from argus_img.intake.validation import validate_image_file
 from argus_img.orchestration.context import create_scan_context
 from argus_img.orchestration.mode_plan import plan_for_mode
 from argus_img.orchestration.representations import build_representation_manifest
@@ -306,6 +305,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
     )
     try:
         OfflineGuard(strict=config.offline.strict).reject_remote_input(str(path))
+        worker_response = None
         try:
             incoming_size = path.stat().st_size if path.exists() and not path.is_symlink() else 0
             store.require_storage_headroom(incoming_size, config.storage.maximum_total_store_bytes)
@@ -321,6 +321,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             release_eligible=False,
             max_bytes=config.limits.max_input_bytes,
         )
+        artifacts["original"] = original
         budget.consume_artifact(original.size_bytes)
         # Per-scan quota guard: reject before allocating derivative artifacts.
         try:
@@ -329,12 +330,10 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             raise ResourceLimitExceeded("storage quota exceeded: %s" % _quota_exc) from _quota_exc
         snapshot_path = store.resolve_path(original)
 
-        # --- ARGUS-01 worker pre-validation -----------------------------------
-        # Run image decode in an isolated subprocess before any in-process
-        # Pillow/OpenCV work.  If the file is a parse bomb or triggers a
-        # native-library crash, only the disposable worker process dies.
-        # TODO(ARGUS-01): move all Pillow/OpenCV/OCR/VLM calls here once
-        # parser_worker.py is expanded to produce full artifact outputs.
+        # --- ARGUS-01 isolated intake -----------------------------------------
+        # The worker is authoritative for format, dimensions, frame count,
+        # structural verification, and a forced pixel decode. The control
+        # process never falls back to parsing an unvalidated upload.
         job_dir = Path(context.job_dir)
         try:
             from argus_img.workers.launcher import launch_parser_worker
@@ -345,42 +344,75 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 snapshot_path=str(snapshot_path),
                 mode=request.mode.value if hasattr(request.mode, "value") else str(request.mode),
                 max_pixels_per_frame=config.limits.max_pixels_per_frame,
+                max_width=config.limits.max_width,
+                max_height=config.limits.max_height,
                 max_total_decoded_pixels=config.limits.max_total_decoded_pixels,
                 max_transformed_pixels=config.limits.max_transformed_pixels,
                 max_frames=config.limits.max_frames,
                 max_artifacts=config.limits.max_artifacts,
                 max_artifact_bytes=config.limits.max_artifact_bytes,
+                max_input_bytes=config.limits.max_input_bytes,
                 max_text_bytes=config.limits.max_text_bytes,
+                extract_frames=mode_plan.extract_frames,
+                extract_thumbnails=mode_plan.extract_thumbnails,
                 deadline_epoch=time.time() + config.limits.parser_timeout_seconds,
                 use_profile=request.use_profile.value if hasattr(request.use_profile, "value") else str(request.use_profile),
             )
-            launch_parser_worker(_worker_request, job_dir, wall_clock_timeout=float(config.limits.parser_timeout_seconds))
+            worker_response = launch_parser_worker(
+                _worker_request, job_dir,
+                wall_clock_timeout=float(config.limits.parser_timeout_seconds),
+            )
         except (WorkerCrashError, WorkerTimeoutError) as _wexc:
             raise IntakeRejected("image parse failed in isolated worker: %s" % _wexc) from _wexc
         except Exception as _wexc:
             if request.use_profile in STRICT_PROFILES or config.offline.strict:
                 raise IntakeRejected("parser worker unavailable for strict profile: %s" % _wexc) from _wexc
-            # Worker infrastructure unavailable — fall through to in-process parsing.
-            # This preserves compatibility until the worker is fully integrated.
-            pass
+            raise IntakeRejected("parser worker unavailable: %s" % _wexc) from _wexc
         # --- end worker pre-validation ----------------------------------------
 
-        detected_mime, format_name = detect_magic(snapshot_path)
+        if worker_response is None:
+            raise IntakeRejected("isolated parser did not produce a valid descriptor")
+        if not worker_response.success:
+            file_descriptor = FileDescriptor(
+                original_filename=request.original_filename or path.name,
+                size_bytes=original.size_bytes,
+                sha256=original.sha256,
+                declared_mime=request.declared_mime,
+                detected_mime="application/octet-stream",
+                format="UNKNOWN",
+                width=None,
+                height=None,
+                frames=0,
+                quarantined_artifact_id=original.artifact_id,
+            )
+            report = _rejected_report(
+                scan_id, request, context.config_hash, file_descriptor, artifacts,
+                worker_response.error or "isolated parser rejected image",
+            )
+            store.save_report(scan_id, report_to_json(report))
+            return report
+        worker_fields = worker_response.metadata_fields
+        detected_mime = str(worker_fields.get("detected_mime", "application/octet-stream"))
+        format_name = str(worker_fields.get("format", "UNKNOWN"))
         original.media_type = detected_mime
         original.representation_id = "repr:original"
         store.update_artifact(original)
         artifacts["original"] = original
         try:
-            file_descriptor = validate_image_file(
-                snapshot_path,
-                request.declared_mime,
-                config.limits,
-                known_sha256=original.sha256,
-                known_size=original.size_bytes,
+            file_descriptor = FileDescriptor(
+                original_filename=request.original_filename or path.name,
+                size_bytes=int(worker_fields["size_bytes"]),
+                sha256=str(worker_fields["sha256"]),
+                declared_mime=request.declared_mime,
+                detected_mime=detected_mime,
+                format=format_name,
+                width=int(worker_fields["width"]),
+                height=int(worker_fields["height"]),
+                frames=int(worker_fields["frames"]),
                 quarantined_artifact_id=original.artifact_id,
             )
             file_descriptor.original_filename = request.original_filename or path.name
-        except IntakeRejected as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             file_descriptor = FileDescriptor(
                 original_filename=request.original_filename or path.name,
                 size_bytes=original.size_bytes,
@@ -393,7 +425,7 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
                 frames=0,
                 quarantined_artifact_id=original.artifact_id,
             )
-            report = _rejected_report(scan_id, request, context.config_hash, file_descriptor, artifacts, str(exc))
+            report = _rejected_report(scan_id, request, context.config_hash, file_descriptor, artifacts, "invalid isolated descriptor: %s" % exc)
             store.save_report(scan_id, report_to_json(report))
             return report
         budget.consume_decoded_pixels((file_descriptor.width or 0) * (file_descriptor.height or 0) * max(file_descriptor.frames, 1))
@@ -405,12 +437,69 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
         findings.extend(differential_findings)
         module_status["opencv_decoder"] = opencv_status
 
-        canonical = create_canonical_artifacts(store, original, snapshot_path, scan_id, budget)
-        artifacts.update(canonical)
+        # Import only worker-produced files after launcher-side hash, path,
+        # MIME, role, and dimension validation. No control-side image decode
+        # is used to create canonical or frame artifacts.
+        worker_artifacts: Dict[str, Artifact] = {}
+        for record in worker_response.artifacts:
+            artifact = store.store_file(
+                Path(record.path),
+                artifact_id=record.artifact_id,
+                media_type=record.media_type,
+                created_by="parser-worker",
+                role=record.role,
+                release_eligible=False,
+                max_bytes=config.limits.max_artifact_bytes,
+            )
+            artifact.derived_from = original.artifact_id
+            artifact.width = record.width
+            artifact.height = record.height
+            artifact.frame_index = record.frame_index
+            artifact.representation_id = {
+                "canonical_lossy": "repr:release-candidate",
+                "canonical_lossless": "repr:canonical-lossless",
+                "flattened_white": "repr:alpha-white",
+                "flattened_black": "repr:alpha-black",
+            }.get(record.role, "repr:%s" % record.role)
+            if record.transformation_type:
+                parameters = {"worker_generated": True}
+                if record.role == "canonical_lossy":
+                    parameters.update({
+                        "metadata_stripped": True,
+                        "lossy": True,
+                        "flattened": True,
+                        "alpha_composited": True,
+                        "background": "white",
+                        "quality": 90,
+                    })
+                elif record.role == "canonical_lossless":
+                    parameters.update({"metadata_stripped": True, "orientation_applied": True})
+                elif record.role in {"flattened_white", "flattened_black"}:
+                    parameters.update({
+                        "metadata_stripped": True,
+                        "background": "white" if record.role == "flattened_white" else "black",
+                    })
+                if record.frame_index is not None:
+                    parameters["frame_index"] = record.frame_index
+                artifact.transformation = ArtifactTransformation(
+                    transformation_id=record.transformation_id or "transform:%s" % record.role,
+                    type=record.transformation_type,
+                    parameters=parameters,
+                )
+            store.update_artifact(artifact)
+            worker_artifacts[record.role] = artifact
+            budget.consume_transformed_pixels((record.width or 0) * (record.height or 0))
+            budget.consume_artifact(record.size_bytes)
+        artifacts.update(worker_artifacts)
+        try:
+            canonical = {
+                key: worker_artifacts[key]
+                for key in ("canonical_lossless", "canonical_lossy", "flattened_white", "flattened_black")
+            }
+        except KeyError as exc:
+            raise IntakeRejected("isolated parser omitted required canonical artifact: %s" % exc) from exc
         canonical_path = store.resolve_path(canonical["canonical_lossless"])
         release_candidate_path = store.resolve_path(canonical["canonical_lossy"])
-        if mode_plan.extract_frames and file_descriptor.frames > 1:
-            artifacts.update(extract_frames(store, original, snapshot_path, scan_id, config.limits.max_frames, budget))
         thumbnail_artifacts: Dict[str, Artifact] = {}
         if mode_plan.extract_thumbnails:
             thumbnail_artifacts = extract_embedded_thumbnails(store, original, snapshot_path, scan_id, budget)
@@ -714,47 +803,57 @@ def scan_file(path: Path, request: Optional[ScanRequest] = None, config: Optiona
             } | {
                 obs_id for f in semantic_findings for obs_id in f.observation_ids
             }
+            classifier_errors = []
             classifier_findings = analyze_classifier(
                 observations, scan_id, include_raw_text=False,
                 skip_observation_ids=rule_covered_obs,
                 corroborated_observation_ids=corroborated_obs,
                 derived_texts=derived_map,
+                errors=classifier_errors,
             )
             findings.extend(classifier_findings)
             has_block = any(f.state == EpistemicState.HIGHLY_LIKELY for f in classifier_findings)
+            classifier_state = (
+                EpistemicState.ERROR if classifier_errors else
+                EpistemicState.HIGHLY_LIKELY if has_block else
+                EpistemicState.POSSIBLE if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND
+            )
             detector_executions.append(
                 _execution(
                     "detector:prompt-classifier",
-                    DetectorStatus.SUCCESS if classifier_findings else DetectorStatus.NO_EVIDENCE,
-                    EpistemicState.HIGHLY_LIKELY if has_block else (
-                        EpistemicState.POSSIBLE if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND),
+                    DetectorStatus.ERROR if classifier_errors else (
+                        DetectorStatus.SUCCESS if classifier_findings else DetectorStatus.NO_EVIDENCE),
+                    classifier_state,
                     family="prompt",
                     category="prompt_injection",
                     required=False,
                     started_at=t0_classifier,
+                    reason="classifier_inference_failed" if classifier_errors else None,
                 )
             )
             module_status["prompt_classifier"] = ModuleStatus(
                 name="prompt_classifier",
-                status=EpistemicState.HIGHLY_LIKELY if has_block else (
-                    EpistemicState.POSSIBLE if classifier_findings else EpistemicState.NO_EVIDENCE_FOUND),
+                status=classifier_state,
+                reason="classifier_inference_failed" if classifier_errors else None,
             )
         else:
+            configured_classifier = classifier_status().get("configured", False)
+            classifier_reason = "invalid_local_model_configuration" if configured_classifier else "no_local_model_configured"
             detector_executions.append(
                 _execution(
                     "detector:prompt-classifier",
-                    DetectorStatus.NOT_TESTED,
-                    EpistemicState.NOT_TESTED,
+                    DetectorStatus.ERROR if configured_classifier else DetectorStatus.NOT_TESTED,
+                    EpistemicState.ERROR if configured_classifier else EpistemicState.NOT_TESTED,
                     family="prompt",
                     category="prompt_injection",
                     required=False,
-                    reason="no_local_model_configured",
+                    reason=classifier_reason,
                 )
             )
             module_status["prompt_classifier"] = ModuleStatus(
                 name="prompt_classifier",
-                status=EpistemicState.NOT_TESTED,
-                reason="no_local_model_configured",
+                status=EpistemicState.ERROR if configured_classifier else EpistemicState.NOT_TESTED,
+                reason=classifier_reason,
             )
         t0_privacy = datetime.now(timezone.utc)
         privacy_findings = analyze_privacy(observations, scan_id, include_raw_text=False)

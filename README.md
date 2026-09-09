@@ -6,6 +6,12 @@ The system does not claim an image is universally safe. Unknown encrypted stegan
 
 ## Quick Start
 
+Install the locked Python environment with `uv sync --locked --extra dev`.
+Image-level prompt detection requires a local OCR backend. On Debian/Ubuntu,
+install `tesseract-ocr tesseract-ocr-eng` before running the examples or tests.
+The required `wordninja` package supplies the vocabulary for OCR repair,
+split-word reassembly, and the classifier's gibberish filter.
+
 ```bash
 PYTHONPATH=src python3 scripts/generate_test_images.py
 PYTHONPATH=src python3 -m argus_img.cli.main scan tests/fixtures/clean.png --output report.json

@@ -11,7 +11,9 @@
 - Malware detection requires local tools and local signatures.
 - C2PA absence is neutral, and valid signatures do not prove depicted truth.
 - No live revocation or threat-intelligence checks are performed.
-- A real local VLM and synthetic-image classifiers are deferred. The local
+- Synthetic-image classifiers are deferred. A local SmolVLM adapter exists but
+  requires operator-staged weights and does not enable the VLM_READ_ONLY policy.
+  The local
   prompt-injection classifier is implemented but optional — it is `NOT_TESTED`
   until an operator supplies a model directory.
 - The prompt-injection classifier's non-English coverage is partial: the base
@@ -58,4 +60,3 @@ trusts high-confidence character runs and treats low-confidence runs
 differently, rather than string-similarity heuristics on the raw output. Not
 attempted here — Tesseract per-character confidence is not currently plumbed
 through.
-

@@ -54,10 +54,11 @@ def _norm(text: str) -> str:
 
 def _holdout_keys() -> set:
     keys = set()
-    for line in ARGUS_CORPUS.read_text().splitlines():
-        line = line.strip()
-        if line:
-            keys.add(_norm(json.loads(line)["text"]))
+    for corpus_path in (ARGUS_CORPUS, ARGUS_CORPUS.with_name("domain_holdout.jsonl")):
+        for line in corpus_path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                keys.add(_norm(json.loads(line)["text"]))
     # ADVERSARIAL_BENIGN list from the generalization test
     src = GENERALIZATION_TEST.read_text()
     block = re.search(r"ADVERSARIAL_BENIGN\s*=\s*\[(.*?)\]", src, re.S)
@@ -80,7 +81,9 @@ def _from_public(holdout: set) -> List[Tuple[str, int, str]]:
                 continue
             if _norm(text) in holdout:
                 continue
-            rows.append((text, int(rec["label"]), "public:%s" % name.split("/")[-1]))
+            source_name = name.split("/")[-1]
+            group = hashlib.sha256(_norm(text).encode()).hexdigest()[:16]
+            rows.append((text, int(rec["label"]), "public:%s:%s" % (source_name, group)))
     return rows
 
 
@@ -93,9 +96,16 @@ def _from_synthetic(holdout: set, multiplier: int, seed: int) -> List[Tuple[str,
             continue
         # keep synthetic ATTACK augmentations + template paraphrases + hard
         # negatives; drop the raw 107 seed texts (they are the held-out set)
-        if it.source == "seed":
+        if it.seed_id:
             continue
-        rows.append((it.text[:MAX_CHARS], 0 if not it.is_attack else 1, "synthetic:%s" % it.source))
+        variants = [it.text]
+        if not it.source.startswith("aug:"):
+            for augmentation in ("ocr_confuse", "leet", "punct_noise"):
+                generator = random.Random("%s:%s:%s" % (seed, it.text, augmentation))
+                variants.append(bpc.ATTACK_AUGS[augmentation](it.text, generator))
+        for text in variants:
+            if _norm(text[:MAX_CHARS]) not in holdout:
+                rows.append((text[:MAX_CHARS], 0 if not it.is_attack else 1, "synthetic:%s" % it.group))
     return rows
 
 
@@ -113,9 +123,50 @@ def _from_ocr_captures(holdout: set, path: pathlib.Path) -> List[Tuple[str, int,
         text = (rec["text"] or "").strip()[:MAX_CHARS]
         if len(text) < 4 or _norm(text) in holdout:
             continue
-        rows.append((text, int(rec["binary_label"]), "ocr_capture"))
+        image_id = rec.get("image_id")
+        if not image_id:
+            raise ValueError("OCR captures require image_id for leakage-safe splitting")
+        rows.append((text, int(rec["binary_label"]), "ocr_capture:%s" % image_id))
     print("ocr captures: %d rows" % len(rows))
     return rows
+
+
+def _split_rows(rows, val_frac, seed):
+    if not 0 < val_frac < 1:
+        raise ValueError("val_frac must be between zero and one")
+    splits = {"train": [], "val": []}
+    for row in rows:
+        text, label, source = row
+        group = source if source.startswith(("synthetic:", "ocr_capture:")) else _norm(text)
+        digest = hashlib.sha256((str(seed) + ":" + group).encode()).digest()
+        fraction = int.from_bytes(digest[:8], "big") / 2**64
+        splits["val" if fraction < val_frac else "train"].append(row)
+    return splits
+
+
+def _augment_training_rows(rows, excluded, seed):
+    import build_prompt_corpus as builder
+
+    augmented = list(rows)
+    seen = {_norm(text) for text, _, _ in rows} | excluded
+    for text, label, source in rows:
+        if not source.startswith("public:") or len(text) > 600:
+            continue
+        generator = random.Random("ocr-domain:%s:%s" % (seed, _norm(text)))
+        words = text.split()
+        transposed = []
+        for word in words:
+            if len(word) >= 5 and generator.random() < 0.5:
+                position = generator.randrange(1, len(word) - 2)
+                word = (word[:position] + word[position + 1] + word[position]
+                        + word[position + 2:])
+            transposed.append(word)
+        for variant in (builder.aug_ocr_confuse(text, generator), " ".join(transposed)):
+            key = _norm(variant)
+            if key not in seen and len(key) >= 4:
+                augmented.append((variant, label, source))
+                seen.add(key)
+    return augmented
 
 
 def main(argv) -> int:
@@ -143,6 +194,8 @@ def main(argv) -> int:
     by_key: Dict[str, Tuple[str, int, str]] = {}
     for text, label, source in rows:
         k = _norm(text)
+        if k in holdout:
+            continue
         if k not in by_key or label > by_key[k][1]:
             by_key[k] = (text, label, source)
     rows = list(by_key.values())
@@ -159,8 +212,9 @@ def main(argv) -> int:
     rows = inj + ben
     random.shuffle(rows)
 
-    cut = int(len(rows) * (1 - args.val_frac))
-    splits = {"train": rows[:cut], "val": rows[cut:]}
+    splits = _split_rows(rows, args.val_frac, args.seed)
+    excluded = holdout | {_norm(text) for text, _, _ in splits["val"]}
+    splits["train"] = _augment_training_rows(splits["train"], excluded, args.seed)
 
     args.out.mkdir(parents=True, exist_ok=True)
     manifest: Dict[str, object] = {"held_out": len(holdout), "max_chars": MAX_CHARS, "splits": {}}

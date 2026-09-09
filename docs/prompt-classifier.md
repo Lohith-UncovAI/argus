@@ -51,6 +51,11 @@ Identical to ExifTool / Tesseract / ClamAV and the SmolVLM caption detector:
   directory.
 * **No hardcoded repo.** The model identity lives entirely in configuration.
 
+Configured directories must pass preflight before the adapter is available.
+Invalid configuration and inference failures are reported as `ERROR`; they
+must not be interpreted as a completed negative classification. Label names
+are matched conservatively: `UNSAFE` is an attack label, not a match for `SAFE`.
+
 ### Configuration (environment variables)
 
 | Variable | Meaning |
@@ -101,8 +106,11 @@ a temperature on the val split automatically and writes it here.
 ### Attestation
 
 Every classifier finding carries a `model_fingerprint`
-(`sha256:` over `config.json` + `argus_label_map.json` + tokenizer files + a
-weight-file size manifest — cheap, no gigabyte hashing). The same fingerprint,
+(`sha256:` over configuration, tokenizer, weight contents, and any external
+label-map override). File digests are cached against filesystem change metadata;
+same-size weight replacements change the fingerprint and invalidate the model
+cache. This replaces the earlier size-only weight manifest, so old fingerprints
+must be regenerated. The same fingerprint,
 plus backend / labels / thresholds / calibration method, appears under
 `model_adapters.prompt_classifier` in `GET /v1/capabilities` and
 `model_adapters_configured.prompt_classifier` in `GET /v1/attestation`, so a
@@ -132,8 +140,12 @@ screenshot.
    is forwarded anywhere"). The trainer oversamples these — it is the contrast
    a small model does not otherwise pick up.
 
-Splits are leakage-safe (all variants of a seed, and all fills of a template,
-share a split). The manifest reports class/label/source balance per split.
+Synthetic template families and OCR captures from the same image now share a
+train/validation split. Evaluation seeds and all their synthetic augmentations
+are excluded from binary training. Previously, the binary assembler discarded
+these groups and excluded only exact normalized evaluation text, so its
+historical validation and held-out results are not independent generalization
+estimates. The manifest reports class/label/source balance per split.
 
 `build_prompt_corpus.py`'s synthetic data alone is a scaffold — a small part of
 the mix. `assemble_training_corpus.py` (below) combines it with public datasets
@@ -144,6 +156,19 @@ text. Document licensing per source (the repo is MIT; models and datasets carry
 their own terms).
 
 ## Training
+
+The latest domain experiment and its rejected candidate are documented in
+[domain-training-experiment.md](domain-training-experiment.md). Short public
+training texts now receive OCR confusion and letter-transposition augmentation
+after splitting. The reserved `domain_holdout.jsonl` supplements the established
+benchmark; evaluate it with the calibration tool's `--corpus` option.
+
+Install the locked build dependencies with `uv sync --locked --extra training`.
+Use an empty candidate output directory: the build refuses to overwrite an
+existing model. ONNX export uses PyTorch and ONNX Runtime directly, avoiding
+an exporter dependency that forces a conflicting Transformers downgrade.
+The acceptance gate checks classifier recall and false positives at the
+configured review threshold, not an optimistically selected test-set threshold.
 
 **One command:** `tools/training/build_model.py` chains corpus assembly →
 training → int8 ONNX export → held-out evaluation, enforces a metrics floor
@@ -196,6 +221,10 @@ regression gate for any model or threshold change.
 
 ## Measured results (2026-09)
 
+These are historical measurements of the existing model, whose training used
+the earlier split procedure described above. They are regression baselines,
+not independently validated generalization claims.
+
 Held-out evaluation = the 132-item `prompt_text_corpus.jsonl` (direct /
 paraphrased / garbled-OCR / obfuscated / compound / tiled-split / multilingual
 attacks; plain / vocabulary-trap / document-style / multilingual / quoted-
@@ -242,7 +271,7 @@ retrain on a multilingual base (`microsoft/mdeberta-v3-base`, 86M).
 |---|---|---|---|
 | rules + semantic (regex only) | 88% | 0 | leetspeak fold, word re-segmentation, OCR spell repair, de-spacing |
 | + `protectai/deberta-v3-base-prompt-injection-v2` (184M, shadow) | 98.2% | **3 BLOCK** | bimodal — scores "No hidden instructions" and "no system prompt to override here" at 1.0; cannot do negation |
-| + **`pi-argus`** (deberta-v3-**xsmall**, 22M) | **100%** | **1 REVIEW** | raw benign median 0.009; only `doc-005` and `ml-b01` score high (0.99). `ml-b01` bounded out by corroboration + context; `doc-005` → REVIEW. Every negation and adversarial-benign probe ~0.005. |
+| + **`pi-argus`** (deberta-v3-**xsmall**, 22M) | **98.6% flat corpus** | **1 REVIEW** | raw benign median 0.009; only `doc-005` and `ml-b01` score high (0.99). `ml-b01` bounded out by corroboration + context; `doc-005` → REVIEW. Every negation and adversarial-benign probe ~0.005. |
 
 **Why xsmall works, when an earlier attempt said it couldn't.** The first
 xsmall models were KL-distilled from the ProtectAI teacher — which itself
@@ -257,7 +286,7 @@ fixed it. xsmall now separates cleanly.
 With the corroboration rule, the model's solo catches (garbled OCR, obfuscation
 the regexes miss) are **flagged as REVIEW**, and become BLOCK only when a rule
 or the heuristic scorer independently agrees. Overall attack recall (anything
-flagged) is 100%; garbled-OCR *BLOCK* rate is ~58% (the rest REVIEW), obfuscated
+flagged) is 98.6% on the flat corpus; garbled-OCR *BLOCK* rate is ~58% (the rest REVIEW), obfuscated
 is 100% BLOCK (de-spacing feeds the rules).
 
 `pi-argus`: 283 MB fp32 / **87 MB int8 ONNX**. CPU latency ~10 ms/text

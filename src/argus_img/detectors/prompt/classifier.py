@@ -46,6 +46,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -135,7 +136,7 @@ class LabelMap:
 # Common off-the-shelf label names -> ARGUS reason codes. Used when a model ships
 # no ARGUS label map of its own (ProtectAI, Meta Prompt Guard, deepset, ...).
 _NAME_HEURISTICS: List[Tuple[re.Pattern, LabelSpec]] = [
-    (re.compile(r"benign|legit|safe|clean|negative|no[_-]?injection|label_0$", re.I),
+    (re.compile(r"^(?:benign|legit(?:imate)?|safe|clean|negative|no[_-]?injection|label_0)$", re.I),
      LabelSpec(name="benign", benign=True, reason_codes=())),
     (re.compile(r"jailbreak", re.I),
      LabelSpec(name="jailbreak", severity="critical",
@@ -214,6 +215,8 @@ def load_label_map(model_dir: Path, override_path: Optional[str]) -> LabelMap:
 def _label_map_from_json(data: Dict) -> LabelMap:
     labels = {}
     for idx, spec in data.get("labels", {}).items():
+        if "benign" in spec and not isinstance(spec["benign"], bool):
+            raise ValueError("label benign flags must be JSON booleans")
         labels[int(idx)] = LabelSpec(
             name=spec.get("name", "label_%s" % idx),
             benign=bool(spec.get("benign", False)),
@@ -247,36 +250,31 @@ def classifier_model_dir() -> Optional[Path]:
 
 
 def prompt_classifier_available() -> bool:
-    """True only when a local model dir is configured AND its backend imports."""
+    """True only when the configured local model passes deployment preflight."""
     model_dir = classifier_model_dir()
     if model_dir is None:
         return False
-    backend = os.environ.get(_ENV_BACKEND, "transformers").strip().lower()
-    try:
-        if backend == "onnx":
-            import onnxruntime  # noqa: F401
-            import transformers  # noqa: F401  (tokenizer only)
-            return (model_dir / "model.onnx").is_file()
-        import transformers  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return not classifier_preflight(model_dir)
 
 
 _FINGERPRINT_FILES = ("config.json", "argus_label_map.json", "tokenizer.json",
-                      "tokenizer_config.json", "special_tokens_map.json")
+                      "tokenizer_config.json", "special_tokens_map.json", "added_tokens.json",
+                      "spm.model", "spiece.model", "vocab.txt", "vocab.json", "merges.txt",
+                      "model.safetensors.index.json", "pytorch_model.bin.index.json")
 _FINGERPRINT_WEIGHTS = ("model.safetensors", "pytorch_model.bin", "model.onnx")
 
 
-def classifier_fingerprint(model_dir: Optional[Path] = None) -> Optional[str]:
-    """A cheap, stable identity for the configured model.
+@lru_cache(maxsize=128)
+def _file_digest(path: str, signature: tuple) -> bytes:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.digest()
 
-    sha256 over the bytes of the small config/tokenizer files plus a manifest of
-    ``(name, size)`` for the weight files — enough to detect a swapped model or
-    changed label map without hashing gigabytes of weights. Returned in the
-    attestation payload and on every classifier finding so a report is tied to a
-    reproducible model.
-    """
+
+def classifier_fingerprint(model_dir: Optional[Path] = None) -> Optional[str]:
+    """Content identity of model, tokenizer, and effective label-map files."""
     model_dir = model_dir or classifier_model_dir()
     if model_dir is None:
         return None
@@ -284,15 +282,20 @@ def classifier_fingerprint(model_dir: Optional[Path] = None) -> Optional[str]:
     if not model_dir.is_dir():
         return None
     h = hashlib.sha256()
-    for name in _FINGERPRINT_FILES:
+    names = set(_FINGERPRINT_FILES) | set(_FINGERPRINT_WEIGHTS)
+    for pattern in ("model-*.safetensors", "pytorch_model-*.bin", "model.onnx*"):
+        names.update(path.name for path in model_dir.glob(pattern) if path.is_file())
+    for name in sorted(names):
         p = model_dir / name
         if p.is_file():
             h.update(b"%s\0" % name.encode())
-            h.update(p.read_bytes())
-    for name in _FINGERPRINT_WEIGHTS:
-        p = model_dir / name
-        if p.is_file():
-            h.update(b"%s\0%d\0" % (name.encode(), p.stat().st_size))
+            stat = p.stat()
+            h.update(_file_digest(str(p.resolve()), (stat.st_dev, stat.st_ino, stat.st_size,
+                                                     stat.st_mtime_ns, stat.st_ctime_ns)))
+    override = os.environ.get(_ENV_LABELMAP, "").strip()
+    if override and Path(override).is_file():
+        h.update(b"label-map-override\0")
+        h.update(Path(override).read_bytes())
     return "sha256:" + h.hexdigest()
 
 
@@ -330,9 +333,28 @@ def classifier_preflight(model_dir: Optional[Path] = None) -> List[str]:
     override = os.environ.get(_ENV_LABELMAP, "").strip() or None
     try:
         lm = load_label_map(model_dir, override)
+        config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+        declared_labels = config.get("num_labels")
+        if declared_labels is not None and int(declared_labels) != len(lm.labels):
+            problems.append("config num_labels does not match label map")
         benign = [i for i in lm.labels if lm.spec(i).benign]
         if not benign:
             problems.append("label map declares no benign label")
+        if not any(not spec.benign for spec in lm.labels.values()):
+            problems.append("label map declares no attack label")
+        if set(lm.labels) != set(range(len(lm.labels))):
+            problems.append("label map indices must be contiguous from zero")
+        if len({spec.name for spec in lm.labels.values()}) != len(lm.labels):
+            problems.append("label map names must be unique")
+        if lm.problem_type not in ("single_label_classification", "multi_label_classification"):
+            problems.append("unsupported label map problem_type")
+        calibration = lm.calibration
+        if calibration.method not in ("none", "temperature", "platt"):
+            problems.append("unsupported calibration method")
+        if not math.isfinite(calibration.temperature) or calibration.temperature <= 0:
+            problems.append("calibration temperature must be finite and positive")
+        if not all(math.isfinite(value) for value in (calibration.a, calibration.b)):
+            problems.append("calibration parameters must be finite")
         if not (0.0 < lm.threshold_review <= lm.threshold_block <= 1.0):
             problems.append("label map thresholds out of order: review=%s block=%s"
                             % (lm.threshold_review, lm.threshold_block))
@@ -353,6 +375,11 @@ def classifier_status() -> Dict[str, object]:
     """Structured status for the /v1/capabilities and attestation endpoints."""
     model_dir = classifier_model_dir()
     if model_dir is None:
+        if os.environ.get(_ENV_PATH, "").strip():
+            problems = classifier_preflight()
+            return {"configured": True, "available": False,
+                    "adapter": "NullPromptClassifier", "reason": "; ".join(problems),
+                    "preflight_problems": problems}
         return {"configured": False, "adapter": "NullPromptClassifier",
                 "reason": "ARGUS_PROMPT_CLASSIFIER_PATH unset"}
     available = prompt_classifier_available()
@@ -413,7 +440,7 @@ class LocalTransformerClassifier:
     ``vlm_detector._get_vlm``.
     """
 
-    _cache: Dict[str, "LocalTransformerClassifier"] = {}
+    _cache: Dict[tuple, "LocalTransformerClassifier"] = {}
 
     def __init__(self, model_dir: Path, label_map: LabelMap, backend: str = "transformers") -> None:
         self.model_dir = model_dir
@@ -426,10 +453,16 @@ class LocalTransformerClassifier:
         model_dir = classifier_model_dir()
         if model_dir is None:
             return None
-        key = str(model_dir)
+        override = os.environ.get(_ENV_LABELMAP, "").strip() or None
+        backend = os.environ.get(_ENV_BACKEND, "transformers").strip().lower()
+        if backend not in ("transformers", "onnx"):
+            raise ValueError("unsupported prompt classifier backend: %s" % backend)
+        label_map = load_label_map(model_dir, override)
+        key = (str(model_dir.resolve()), backend, repr(label_map), classifier_fingerprint(model_dir))
         if key not in cls._cache:
-            label_map = load_label_map(model_dir, os.environ.get(_ENV_LABELMAP, "").strip() or None)
-            backend = os.environ.get(_ENV_BACKEND, "transformers").strip().lower()
+            for stale in list(cls._cache):
+                if stale[0] == key[0]:
+                    del cls._cache[stale]
             cls._cache[key] = cls(model_dir, label_map, backend)
         return cls._cache[key]
 
@@ -523,7 +556,13 @@ class LocalTransformerClassifier:
     def _probabilities(self, text: str) -> Tuple[List[float], Optional[float]]:
         """Return (per-label probabilities, max non-benign raw logit)."""
         logits = list(self._logits(text))
+        if not logits or any(not math.isfinite(value) for value in logits):
+            raise ValueError("classifier returned empty or non-finite logits")
+        if set(self.label_map.labels) != set(range(len(logits))):
+            raise ValueError("classifier output does not match label map")
         cal_logits = self.label_map.calibration.apply_logits(logits)
+        if any(not math.isfinite(value) for value in cal_logits):
+            raise ValueError("calibration produced non-finite logits")
         non_benign = [logits[i] for i in range(len(logits)) if not self.label_map.spec(i).benign]
         raw_max_logit = max(non_benign) if non_benign else None
         if self.label_map.multi_label:

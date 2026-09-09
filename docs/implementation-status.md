@@ -22,13 +22,14 @@
 | API | implemented | FastAPI + body-size + concurrency middleware | security tests | synchronous scan path | async job model |
 | CLI | implemented | Typer with argparse fallback, storage status/cleanup commands | integration tests | Typer absent locally | package install test |
 | offline guard | implemented | passive checks only (no outbound socket) | security tests | not host isolation | stricter seccomp |
-| security (ARGUS findings) | implemented | ARGUS-03/04/05/08/09/10/11 all fixed; ARGUS-02 N/A; strict profiles fail closed when parser-worker infrastructure is unavailable | 224 tests pass | ARGUS-01 remains open: parser worker is pre-validation only; main process still performs Pillow/OpenCV/OCR parsing | move frame extraction, thumbnails, transformations, and OCR into parser_worker |
+| security (ARGUS findings) | implemented / hardening | ARGUS-01 uses an authoritative isolated intake worker for magic detection, bounds, structural verification, forced decode, canonical derivatives, and animated-frame extraction; ARGUS-03/04/05/08/09/10/11 fixed; ARGUS-02 N/A | full suite passes; worker/integration regressions covered | embedded-thumbnail extraction, fast transform-bank generation, and some differential/metadata adapters still run in the control process after worker validation | move remaining thumbnail/transform and original-byte differential/metadata parsing into parser_worker |
 
-## Current verification snapshot
+## Historical verification snapshot
 
 - Date: July 8, 2026.
 - Git SHA at latest evaluation start: `5f0232a`.
-- Full test suite: `PYTHONPATH=src .venv/bin/pytest -q` passed for 224 collected tests; warnings were deprecations only.
+- Historical full test suite: `PYTHONPATH=src .venv/bin/pytest -q` passed for 224 collected tests; warnings were deprecations only.
+- Current hardening verification: the OCR-enabled suite passes with exit code 0; focused classifier/training isolation checks pass, and model-backed adversarial guards pass 10/10. The currently deployed model remains the 98.6% held-out baseline; a leakage-safe retrained candidate was rejected by the operating-recall gate and was not promoted.
 - Latest targeted evaluation: `evaluation-results/latest/20260708-150030`, acceptance gate `PASS`, 6 scans, 0 release-grant violations.
 - Latest evaluation config hash: `sha256:99d7227895ea3713b82be8362a03093674a796778f908e7d7cc1c2d56e37e299` with run-local `ARGUS_DATA_DIR`.
 - Historical folders `random-dataset-20260707-argus`, `retest-previous-fail-cases-20260707-final`, and `more-diverse-20260707` are historical only because their `UNSUPPORTED` actions predate the ClamAV database fix.
