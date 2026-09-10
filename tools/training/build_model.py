@@ -47,6 +47,8 @@ FLOORS = {
     "benign_trap_blocked": 0,
     "classifier_operating_recall": 0.95,
     "classifier_benign_fp_max": 2,       # doc-005 / ml-b01, both corroboration-bounded to REVIEW
+    "held_out_benchmark_recall_at_1pct_fp": 0.80,  # independent externally-sourced generalization gate
+    "held_out_benchmark_roc_auc": 0.95,
 }
 
 
@@ -130,7 +132,33 @@ def _check_floors(report: dict) -> list[str]:
     fp = int(round(best.get("fp", best.get("false_positives", 0)) or 0))
     if fp > FLOORS["classifier_benign_fp_max"]:
         failures.append("classifier benign FP %d > %d at operating threshold" % (fp, FLOORS["classifier_benign_fp_max"]))
+
+    bench = report.get("held_out_benchmark")
+    if not bench:
+        failures.append("held-out benchmark did not run (heldout_benchmark.jsonl missing?)")
+    else:
+        auc = float(bench.get("roc_auc", 0.0))
+        r1 = float(bench.get("recall_at_1pct_fp", {}).get("recall", 0.0))
+        if auc < FLOORS["held_out_benchmark_roc_auc"]:
+            failures.append("held-out benchmark ROC-AUC %.3f < %.3f" % (auc, FLOORS["held_out_benchmark_roc_auc"]))
+        if r1 < FLOORS["held_out_benchmark_recall_at_1pct_fp"]:
+            failures.append("held-out benchmark recall@1%%FP %.3f < %.3f"
+                            % (r1, FLOORS["held_out_benchmark_recall_at_1pct_fp"]))
     return failures
+
+
+def _check_leak(manifest: dict) -> list:
+    audit = manifest.get("audit") or {}
+    hard = 0
+    for key in ("shared_source_groups_train_val", "exact_eval_in_train", "fuzzy_eval_in_train"):
+        hard += int(audit.get(key, 0) or 0)
+    if not audit:
+        return ["corpus manifest has no split audit (assemble_training_corpus.py too old?)"]
+    return (["corpus split audit found %d hard leak(s): %s"
+             % (hard, {k: audit[k] for k in
+                       ("shared_source_groups_train_val", "exact_eval_in_train", "fuzzy_eval_in_train")
+                       if k in audit})]
+            if hard else [])
 
 
 def main(argv) -> int:
@@ -174,7 +202,7 @@ def main(argv) -> int:
     asm = [py, "tools/training/assemble_training_corpus.py",
            "--out", str(CORPUS_DIR),
            "--synthetic-multiplier", str(args.synthetic_multiplier),
-           "--seed", str(args.seed)]
+           "--seed", str(args.seed), "--fail-on-leak"]
     _run(asm)
     steps.append({"step": "assemble_training_corpus", "argv": asm[2:]})
 
@@ -184,6 +212,12 @@ def main(argv) -> int:
         if (CORPUS_DIR / ("prompt_corpus.%s.jsonl" % name)).is_file()
     }
     manifest = json.loads((CORPUS_DIR / "manifest.json").read_text())
+    leak = _check_leak(manifest)
+    if leak:
+        print("\nCORPUS LEAK GATE FAILED:")
+        for problem in leak:
+            print("  - " + problem)
+        return 1
 
     # 3. Train ----------------------------------------------------------------
     if not args.skip_train:
@@ -241,7 +275,9 @@ def main(argv) -> int:
             "classifier_best_f1": report["classifier_sweep"].get("best_f1_threshold_metrics"),
             "classifier_operating": report["classifier_sweep"].get("operating_threshold_metrics"),
             "by_category": pb["by_category"],
+            "held_out_benchmark": report.get("held_out_benchmark"),
         },
+        "corpus_audit": manifest.get("audit"),
         "fingerprint": classifier_fingerprint(),
         "status": classifier_status(),
         "floor": FLOORS,
@@ -250,6 +286,29 @@ def main(argv) -> int:
     }
 
     (out / "BUILD_REPORT.json").write_text(json.dumps(provenance, indent=2))
+
+    # EVAL_SUMMARY.json — the small file a running scanner and the drift report
+    # read (fingerprint + headline eval numbers + benign score baseline).
+    bench = report.get("held_out_benchmark") or {}
+    (out / "EVAL_SUMMARY.json").write_text(json.dumps({
+        "model_fingerprint": classifier_fingerprint(),
+        "built_at": provenance["built_at"],
+        "git_sha": provenance["git_sha"],
+        "base_model": args.base_model,
+        "held_out_attack_recall_pct": pb["overall_recall_pct"],
+        "held_out_false_positive_rate_pct": pb["overall_false_positive_rate_pct"],
+        "held_out_benchmark_roc_auc": bench.get("roc_auc"),
+        "held_out_benchmark_recall_at_1pct_fp": (bench.get("recall_at_1pct_fp") or {}).get("recall"),
+        "floor_met": not failures,
+        "score_baseline": {
+            "model_fingerprint": classifier_fingerprint(),
+            "benign_score_quantiles": bench.get("benign_score_quantiles"),
+            "benign_score_p50": bench.get("benign_score_p50"),
+            "benign_score_p95": bench.get("benign_score_p95"),
+            "benign_fp_at_review": bench.get("benign_fp_at_review"),
+        },
+    }, indent=2))
+
     if failures and not args.allow_below_floor:
         print("\nMETRICS FLOOR NOT MET:")
         for f in failures:

@@ -140,20 +140,46 @@ screenshot.
    is forwarded anywhere"). The trainer oversamples these — it is the contrast
    a small model does not otherwise pick up.
 
-Synthetic template families and OCR captures from the same image now share a
-train/validation split. Evaluation seeds and all their synthetic augmentations
-are excluded from binary training. Previously, the binary assembler discarded
-these groups and excluded only exact normalized evaluation text, so its
-historical validation and held-out results are not independent generalization
-estimates. The manifest reports class/label/source balance per split.
+### Public datasets (all read from the local HF cache; licences per source)
 
-`build_prompt_corpus.py`'s synthetic data alone is a scaffold — a small part of
-the mix. `assemble_training_corpus.py` (below) combines it with public datasets
-**and real-OCR captures** (`extract_ocr_captures.py` over a rendered image
-corpus). The remaining gap is real production images — the eval split
-(`prompt_text_corpus.jsonl` + the adversarial probes) is held out by normalized
-text. Document licensing per source (the repo is MIT; models and datasets carry
-their own terms).
+| dataset | role | licence |
+|---|---|---|
+| `deepset/prompt-injections` | attacks + benign, chatbot-style | Apache-2.0 |
+| `xTRam1/safe-guard-prompt-injection` | attacks + benign, chatbot-style | Apache-2.0 |
+| `jayavibhav/prompt-injection` (~262k train rows, ~47% injection, some non-Latin) | **training backbone** | see dataset card |
+| synthetic (`build_prompt_corpus.py`) | ARGUS image-OCR distribution, contrastive negation, hard negatives, multilingual banks | MIT (this repo) |
+| real-OCR captures (`extract_ocr_captures.py`) | the actual scan-time text distribution | derived from the rendered eval corpus |
+
+`assemble_training_corpus.py` caps the public contribution
+(`--max-public-per-class`, default 50 000) so the synthetic image-domain and
+real-OCR rows are not diluted to a fraction of a percent; the trainer then
+oversamples the contrastive/OCR/hard-negative rows.
+
+### Leakage-safe splitting
+
+The assembler holds out **every text an evaluation harness scores** — the
+`prompt_text_corpus.jsonl` items, `domain_holdout.jsonl`, `heldout_benchmark.jsonl`,
+and the adversarial-benign probes — by exact normalized text **and by
+near-duplicate** (`tools/training/_fuzzy.py`, character-shingle Jaccard ≥ 0.72),
+so a paraphrase or OCR-corrupted variant of an eval item cannot leak into
+training. `assemble` writes a **split audit** into `manifest.json`
+(`shared_source_groups_train_val`, `exact_eval_in_train`, `fuzzy_eval_in_train`,
+per-source / per-language balance); `build_model.py` refuses to build when any
+hard-leak counter is non-zero (`--fail-on-leak`), and
+`tests/unit/test_training_isolation.py` guards the fuzzy check.
+
+### Held-out benchmark
+
+`tools/evaluation/build_heldout_benchmark.py` freezes a stratified ~2 000-row
+slice of the `jayavibhav/prompt-injection` **test** split (fuzzy-excluded from
+every hand corpus) as `corpus/heldout_benchmark.jsonl`. It is an independent
+generalization number reported by `calibrate_prompt_detectors.py` (ROC-AUC,
+recall @ 1% / 5% FP); `build_model.py` gates on
+`held_out_benchmark_recall_at_1pct_fp` and `held_out_benchmark_roc_auc`. With no
+network access, this stands in for a truly external benchmark (qualifire, Lakera,
+hackaprompt, llmail-inject) — wire those in once the cache is staged.
+
+The remaining gap is still real production images.
 
 ## Training
 
@@ -216,8 +242,47 @@ Neither runs in CI or at scan time. See "How the current model was produced".
 per-category table and a classifier threshold sweep (precision / recall / F1),
 and shows how the classifier does on the quoted/discussed security-education
 band. Pick the operating point from the sweep, write it into the label map's
-`threshold_block` / `threshold_review`, and re-run. Run this in CI as the
-regression gate for any model or threshold change.
+`threshold_block` / `threshold_review`, and re-run.
+
+### CI and monitoring
+
+* **Deterministic gate (CI).** `.github/workflows/ci.yml`'s `prompt-calibration`
+  job runs `tools/evaluation/check_calibration_regression.py` — the rule engine +
+  heuristic scorer against the 271-item corpus, **no model weights** — and diffs
+  the per-category behaviour against `corpus/expected_calibration.json`. It fails
+  on any drop in attack recall or rise in benign flags/BLOCKs. Regenerate the
+  baseline deliberately with `--update` after an intended change.
+* **Model gate (manual / self-hosted).** `.github/workflows/model-eval.yml`
+  (`workflow_dispatch`) runs the full calibration + held-out benchmark +
+  `build_model.py --skip-train` floor check on the training host, where the
+  checkpoint and dataset cache live, and uploads the report.
+* **Drift.** Setting `ARGUS_PROMPT_CLASSIFIER_SCORE_LOG` makes every scored
+  observation append one JSON line (score / label / action / fingerprint, **no
+  text**). `tools/evaluation/classifier_drift_report.py` compares that log's
+  score distribution and flag rate against the model's `EVAL_SUMMARY.json`
+  baseline (KS statistic + flag-rate delta) and exits non-zero on drift — wire it
+  into a periodic job.
+* **Release ledger.** Every promoted model is a row in
+  [prompt-classifier-releases.md](prompt-classifier-releases.md): fingerprint,
+  base model, held-out and benchmark scores, thresholds, registry artifact.
+  Rollback = re-point `ARGUS_PROMPT_CLASSIFIER_PATH` at a prior row.
+* **Attestation.** `EVAL_SUMMARY.json` beside the model surfaces its headline
+  numbers under `model_adapters.prompt_classifier.eval_summary` in
+  `GET /v1/capabilities` (only when its fingerprint matches the loaded model).
+
+### Multilingual
+
+The base model is an English encoder (no multilingual base is available in the
+offline cache). Coverage comes from data: non-Latin rows mined from the public
+sets, ~60 translated attack / ~50 translated benign template families across a
+dozen languages, and — importantly — the scan-time gibberish gate
+(`_prose_ratio` in `classify.py`) no longer drops ordinary non-English prose (it
+now only gates text that *looks* transform-mangled: wedged symbols, digit/letter
+mixing, non-word shapes). On the 35-item `multilingual_attack` eval band this
+lifts flagged-rate from 14% (rules only) to ~90% with a retrained classifier.
+BLOCK rate stays low (corroboration keeps lone classifier hits at REVIEW) and a
+few `multilingual_benign` vocabulary traps still REVIEW-FP — a multilingual base
+(`mdeberta-v3-base`) is the real fix when one can be staged.
 
 ## Measured results (2026-09)
 

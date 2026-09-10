@@ -19,6 +19,10 @@ Design invariants:
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
+import time
 from typing import Dict, List, Optional
 
 from argus_img.core.enums import EpistemicState, PolicyAction
@@ -43,18 +47,83 @@ _DETECTOR_ID = "detector:prompt-classifier"
 _MIN_PROSE_RATIO = 0.40
 _MIN_PROSE_TOKENS = 3
 
+_logger = logging.getLogger(__name__)
+# Opt-in production drift signal. When ``ARGUS_PROMPT_CLASSIFIER_SCORE_LOG`` names
+# a writable path, every scored observation appends one JSON line (no raw text) —
+# score distribution + flag rate over time, compared against the eval baseline by
+# tools/evaluation/classifier_drift_report.py. Best-effort: a logging failure
+# must never disturb a scan.
+_SCORE_LOG_ENV = "ARGUS_PROMPT_CLASSIFIER_SCORE_LOG"
+
+
+def _log_score(fingerprint, result, corroborated, thr_block, thr_review, text_len) -> None:
+    path = os.environ.get(_SCORE_LOG_ENV, "").strip()
+    if not path:
+        return
+    try:
+        blocked = result.score >= thr_block and corroborated
+        review = result.score >= thr_review and not blocked
+        row = {
+            "ts": round(time.time(), 3),
+            "model_fingerprint": fingerprint,
+            "score": round(float(result.score), 4),
+            "label": result.label,
+            "corroborated": bool(corroborated),
+            "action": "BLOCK" if blocked else ("REVIEW" if review else "none"),
+            "text_length": int(text_len),
+        }
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception as exc:  # noqa: BLE001 — drift logging must not break a scan
+        _logger.debug("prompt classifier score-log write failed: %s", exc)
+
 
 def _prose_ratio(text: str) -> float:
+    """Fraction of ASCII-Latin word tokens that are real English words.
+
+    Only meaningful for predominantly-ASCII-Latin text — the failure mode it
+    guards against is aggressive-transform gibberish ("Quareni} cashone Voldde)
+    jsluDti@jur"), which is ASCII. Non-Latin scripts and heavily-accented text
+    (French/German/… injections, Arabic/CJK/Cyrillic) are not gibberish just
+    because they are not in an English dictionary, so they are not gated here —
+    the negation-trained model plus the corroboration rule handle their FPs.
+    """
     try:
         import wordninja
         vocab = wordninja.DEFAULT_LANGUAGE_MODEL._wordcost
     except Exception:  # noqa: BLE001
         return 1.0
     import re
+    letters = [c for c in text if c.isalpha()]
+    if letters and sum(c.isascii() for c in letters) / len(letters) < 0.75:
+        return 1.0  # substantial non-ASCII script — English dictionary does not apply
     toks = re.findall(r"[A-Za-z]{2,}", text)
     if len(toks) < _MIN_PROSE_TOKENS:
         return 1.0
-    return sum(1 for t in toks if t.lower() in vocab) / len(toks)
+    english = sum(1 for t in toks if t.lower() in vocab) / len(toks)
+    if english >= _MIN_PROSE_RATIO:
+        return english
+    # Below the English bar: gate only when the text also *looks* mangled —
+    # symbols wedged into words, digit/letter mixing, mid-word case flips.
+    # Ordinary non-English prose (German, Dutch, Italian, …) is not mangled and
+    # should reach the model. Real transform gibberish ("Voldde) jsluDti@jur")
+    # trips at least one of these.
+    body = re.sub(r"\s+", "", text)
+    if not body:
+        return english
+    noise = sum(1 for c in body if not c.isalnum()) / len(body)
+    digit_words = sum(1 for t in re.findall(r"\S+", text)
+                      if re.search(r"[A-Za-z]", t) and re.search(r"\d", t)) / max(len(toks), 1)
+    # "clean shape" = all-lower, Title-case, or ALL-CAPS. Real words in any Latin
+    # script take one of these; transform gibberish ("jOuIIAIVAIoue", "IMZImttz")
+    # does not. Also flag vowel-less / hyper-consonantal tokens.
+    def _clean(t: str) -> bool:
+        return (t.islower() or t.istitle() or t.isupper()) and not re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", t.lower())
+    clean_ratio = sum(1 for t in toks if _clean(t)) / len(toks)
+    mangled = noise > 0.12 or digit_words > 0.25 or clean_ratio < 0.6
+    # Not mangled → ordinary (possibly non-English) prose: let it reach the model.
+    # Mangled → transform gibberish: keep it gated out.
+    return min(english, _MIN_PROSE_RATIO - 0.01) if mangled else max(english, _MIN_PROSE_RATIO)
 
 
 def analyze_classifier(
@@ -120,10 +189,12 @@ def analyze_classifier(
         if not scored:
             continue
         result: PromptClassification = max(scored, key=lambda r: r.score)
+
+        corroborated_here = obs.observation_id in corroborated
+        _log_score(fingerprint, result, corroborated_here, thr_block, thr_review, len(text))
         if result.score < thr_review:
             continue
 
-        corroborated_here = obs.observation_id in corroborated
         active = result.score >= thr_block and corroborated_here
         downgraded = result.score >= thr_block and not corroborated_here
         spec_reason_codes = _reason_codes_for(clf, result.label)

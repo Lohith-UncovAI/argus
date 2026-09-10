@@ -1,5 +1,18 @@
 # Domain training experiment
 
+> **Superseded (2026-09-10).** The corpus and evaluation infrastructure this
+> experiment flagged as gaps have been rebuilt: near-duplicate leakage exclusion
+> (`tools/training/_fuzzy.py`), a build-time split audit, `jayavibhav/prompt-injection`
+> (~262k rows) as the training backbone, the 271-item hand corpus, an independent
+> 2 000-item held-out benchmark, and CI/model-eval gates. See
+> [prompt-classifier.md](prompt-classifier.md). A first leakage-safe candidate
+> against the new corpus (`deberta-v3-xsmall`, 50k-row subsample, 2 epochs — a
+> shared-GPU constraint, not the final recipe) lifted `multilingual_attack`
+> flagged-rate to ~90%, held 0 benign BLOCK, and scored ROC-AUC 0.9998 /
+> recall@1%FP 0.997 on the held-out benchmark, but still missed the 95%
+> classifier-recall floor on the ARGUS hard corpus (85%) — the same failure mode
+> as below. A full-corpus run on an unshared GPU is the open item.
+
 Run date: 2026-09-09. Candidate: `models/pi-argus-domain-v3`.
 
 The target is prompt injection in text extracted from images. This experiment

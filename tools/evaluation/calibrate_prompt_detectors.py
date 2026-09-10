@@ -84,6 +84,86 @@ def load_corpus(path: pathlib.Path) -> List[CorpusItem]:
     return items
 
 
+def load_benchmark(path: pathlib.Path) -> List[CorpusItem]:
+    """Held-out benchmark rows carry only {id, text, label, source}; fill the
+    category/context CorpusItem needs so the same code paths apply."""
+    items: List[CorpusItem] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        items.append(CorpusItem(id=rec["id"], text=rec["text"],
+                                category=rec.get("source", "heldout"),
+                                label=rec["label"], context="active",
+                                notes=rec.get("source", "")))
+    return items
+
+
+def report_held_out_benchmark(items: List[CorpusItem]) -> Optional[Dict[str, object]]:
+    """Classifier-only generalization number on an independent, externally-sourced
+    corpus: ROC-AUC plus recall at a 1% and 5% false-positive operating point."""
+    if _CLASSIFIER is None:
+        print("\n=== Held-out benchmark ===\nClassifier not configured — skipping.")
+        return None
+    pos, neg = [], []
+    for item in items:
+        r = _CLASSIFIER.classify_sync(item.text)
+        if r.status != "SUCCESS":
+            continue
+        (pos if item.label == "attack" else neg).append(r.score)
+    if not pos or not neg:
+        print("\n=== Held-out benchmark ===\nBenchmark missing a class — skipping.")
+        return None
+
+    def recall_at_fp(target_fp: float) -> Dict[str, float]:
+        thr = sorted(neg)[min(len(neg) - 1, int(round((1.0 - target_fp) * len(neg))))]
+        rec = sum(1 for s in pos if s >= thr) / len(pos)
+        fp = sum(1 for s in neg if s >= thr) / len(neg)
+        return {"threshold": round(thr, 4), "recall": round(rec, 4), "fp": round(fp, 4)}
+
+    # Mann-Whitney U -> ROC-AUC
+    alls = sorted([(s, 1) for s in pos] + [(s, 0) for s in neg])
+    rank_sum = 0.0
+    i = 0
+    while i < len(alls):
+        j = i
+        while j < len(alls) and alls[j][0] == alls[i][0]:
+            j += 1
+        avg_rank = (i + j - 1) / 2 + 1
+        for k in range(i, j):
+            if alls[k][1] == 1:
+                rank_sum += avg_rank
+        i = j
+    auc = (rank_sum - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
+
+    op = _CLASSIFIER.label_map.threshold_review
+    at_review = {"threshold": round(op, 4),
+                 "recall": round(sum(1 for s in pos if s >= op) / len(pos), 4),
+                 "fp": round(sum(1 for s in neg if s >= op) / len(neg), 4)}
+
+    sn = sorted(neg)
+
+    def _q(frac: float) -> float:
+        return round(sn[min(len(sn) - 1, int(frac * len(sn)))], 4)
+
+    thr_b = _CLASSIFIER.label_map.threshold_block
+
+    report = {"n_attack": len(pos), "n_benign": len(neg), "roc_auc": round(auc, 4),
+              "recall_at_1pct_fp": recall_at_fp(0.01), "recall_at_5pct_fp": recall_at_fp(0.05),
+              "at_operating_review_threshold": at_review,
+              "benign_score_quantiles": [_q(f) for f in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.999)],
+              "benign_score_p50": _q(0.5), "benign_score_p95": _q(0.95),
+              "benign_fp_at_review": at_review["fp"],
+              "thresholds": {"block": thr_b, "review": op}}
+    print("\n=== Held-out benchmark (classifier-only, n=%d attack / %d benign) ===" % (len(pos), len(neg)))
+    print("  ROC-AUC:                 %.4f" % auc)
+    print("  recall @ 1%% FP:          %.3f (thr=%.3f)" % (report["recall_at_1pct_fp"]["recall"], report["recall_at_1pct_fp"]["threshold"]))
+    print("  recall @ 5%% FP:          %.3f (thr=%.3f)" % (report["recall_at_5pct_fp"]["recall"], report["recall_at_5pct_fp"]["threshold"]))
+    print("  recall @ review thr %.2f: %.3f  (FP %.3f)" % (op, at_review["recall"], at_review["fp"]))
+    return report
+
+
 def _obs(item: CorpusItem) -> TextObservation:
     return TextObservation(
         observation_id="observation:calibration:%s" % item.id,
@@ -406,6 +486,9 @@ def report_classifier_sweep(items: List[CorpusItem]) -> Optional[Dict[str, objec
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=pathlib.Path, default=CORPUS_PATH)
+    parser.add_argument("--held-out-benchmark", type=pathlib.Path,
+                        default=REPO_ROOT / "tools" / "evaluation" / "corpus" / "heldout_benchmark.jsonl",
+                        help="independent externally-sourced benchmark (classifier-only generalization number)")
     parser.add_argument("--output", type=pathlib.Path,
                         default=RESULTS_DIR / "prompt_calibration_report.json")
     args = parser.parse_args()
@@ -417,6 +500,10 @@ def main() -> None:
     sweep_report = report_threshold_sweep(items)
     classifier_report = report_classifier_sweep(items)
 
+    benchmark_report = None
+    if args.held_out_benchmark and args.held_out_benchmark.is_file():
+        benchmark_report = report_held_out_benchmark(load_benchmark(args.held_out_benchmark))
+
     out_path = args.output
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({
@@ -427,6 +514,7 @@ def main() -> None:
         "corpus_size": len(items),
         "pipeline_behaviour": pipeline_report,
         "threshold_sweep": sweep_report,
+        "held_out_benchmark": benchmark_report,
     }, indent=2))
     print("\nFull report written to %s" % out_path)
 

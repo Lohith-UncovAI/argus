@@ -405,7 +405,34 @@ def classifier_status() -> Dict[str, object]:
         status["threshold_block"] = lm.threshold_block
         status["threshold_review"] = lm.threshold_review
         status["calibration"] = lm.calibration.method
+    summary = _eval_summary(model_dir)
+    if summary is not None:
+        status["eval_summary"] = summary
     return status
+
+
+def _eval_summary(model_dir: Optional[Path]) -> Optional[Dict[str, object]]:
+    """The headline evaluation numbers written next to the model by
+    ``tools/training/build_model.py`` (``EVAL_SUMMARY.json``), surfaced so a
+    running scanner reports which validated model it is serving. Only the
+    reporting subset is exposed, and only when its fingerprint matches the
+    loaded model."""
+    if model_dir is None:
+        return None
+    path = Path(model_dir) / "EVAL_SUMMARY.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if data.get("model_fingerprint") and data["model_fingerprint"] != classifier_fingerprint(model_dir):
+        return {"stale": True, "reason": "EVAL_SUMMARY.json fingerprint does not match the loaded model"}
+    return {k: data.get(k) for k in (
+        "built_at", "git_sha", "base_model", "floor_met",
+        "held_out_attack_recall_pct", "held_out_false_positive_rate_pct",
+        "held_out_benchmark_roc_auc", "held_out_benchmark_recall_at_1pct_fp",
+    ) if k in data}
 
 
 # ── Classification result ───────────────────────────────────────────────────

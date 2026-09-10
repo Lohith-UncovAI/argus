@@ -74,6 +74,10 @@ def main(argv) -> int:
     ap.add_argument("--hard-negative-weight", type=float, default=3.0,
                     help="loss multiplier for contrastive-negation and vocabulary-trap benign examples")
     ap.add_argument("--export-onnx", action="store_true")
+    ap.add_argument("--max-train-rows", type=int, default=0,
+                    help="if >0, subsample the training split to this many rows (keeps every "
+                         "contrastive-negation / OCR-capture / hard-negative row, samples the rest). "
+                         "For fast iteration on a shared / memory-constrained GPU.")
     ap.add_argument("--seed", type=int, default=20260908)
     args = ap.parse_args(argv)
 
@@ -87,6 +91,15 @@ def main(argv) -> int:
 
     set_seed(args.seed)
     tr, va = _load(args.corpus_dir, "train"), _load(args.corpus_dir, "val")
+    if args.max_train_rows and len(tr) > args.max_train_rows:
+        import random as _r
+        keep = [row for row in tr if any(t in row.get("source", "")
+                                         for t in ("contrast", "ocr_capture", "hardneg", "multilingual"))]
+        rest = [row for row in tr if row not in keep]
+        _r.Random(args.seed).shuffle(rest)
+        tr = keep + rest[: max(0, args.max_train_rows - len(keep))]
+        _r.Random(args.seed + 1).shuffle(tr)
+        print("subsampled training split to %d rows (%d kept as always-in)" % (len(tr), len(keep)))
     n_inj = sum(_binlabel(r) for r in tr)
     print("train=%d (inj=%d) val=%d  base=%s teacher=%s"
           % (len(tr), n_inj, len(va), args.base_model, args.teacher_model))

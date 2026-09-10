@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 """Assemble a *binary* (benign / injection) training corpus for the local
-prompt-injection classifier from public datasets + the synthetic image-domain
-augmentations in build_prompt_corpus.py.
+prompt-injection classifier from HF-cached public datasets + the synthetic
+image-domain augmentations in build_prompt_corpus.py + real-OCR captures.
 
 Sources
   - deepset/prompt-injections            (~660, chatbot-style)
   - xTRam1/safe-guard-prompt-injection   (~10k, chatbot-style)
+  - jayavibhav/prompt-injection          (~262k train rows, ~47% injection,
+                                         some non-Latin script) — the backbone;
+                                         capped per class (--max-public-per-class)
   - build_prompt_corpus.build()          synthetic: OCR-corruption / leetspeak /
                                          spacing / misleading-caption attacks,
-                                         template paraphrases, and the large
-                                         hard-negative bank (vocabulary traps,
-                                         security-education text, plain captions)
+                                         template paraphrases, contrastive
+                                         negation pairs, the hard-negative bank,
+                                         and multilingual attack/benign banks
+  - tools/training/corpus/ocr_captures.jsonl  real OCR over the rendered corpus
 
-Held out entirely (never enters train/val) so the calibration harness and the
-generalization test remain a fair evaluation:
-  - every text in tools/evaluation/corpus/prompt_text_corpus.jsonl (the 107
-    hand-labelled ARGUS items)
-  - the adversarial benign probes from
-    tests/unit/test_prompt_paraphrase_generalization.py
+Held out entirely (never enters train/val), by exact normalized text AND by
+near-duplicate (tools/training/_fuzzy.py, char-shingle Jaccard >= FUZZY_THRESHOLD):
+  - tools/evaluation/corpus/prompt_text_corpus.jsonl   (the hand corpus)
+  - tools/evaluation/corpus/domain_holdout.jsonl
+  - tools/evaluation/corpus/heldout_benchmark.jsonl    (the independent benchmark)
+  - the ADVERSARIAL_BENIGN probes in test_prompt_paraphrase_generalization.py
 
-Public chatbot injections carry the *semantics* of an attack; the synthetic
-augmentations carry ARGUS's actual *distribution* (short, OCR-mangled, embedded
-in captions). Both are needed — a model trained only on the public data learns
-"act as DAN" phrasing and does not transfer to image OCR text.
+A split audit (leakage + balance) is written to manifest.json; --fail-on-leak
+exits non-zero on any train/eval or train/val hard leak, and build_model.py
+refuses to build a model on a leaky corpus.
 
 Usage:
-    python tools/training/assemble_training_corpus.py --out tools/training/corpus
+    python tools/training/assemble_training_corpus.py --out tools/training/corpus --fail-on-leak
 """
 from __future__ import annotations
 
@@ -37,60 +40,101 @@ import random
 import re
 import sys
 import unicodedata
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "evaluation"))
+sys.path.insert(0, str(REPO_ROOT))
+
+from tools.training._fuzzy import NearDupChecker  # noqa: E402
 
 ARGUS_CORPUS = REPO_ROOT / "tools" / "evaluation" / "corpus" / "prompt_text_corpus.jsonl"
+HELDOUT_BENCHMARK = REPO_ROOT / "tools" / "evaluation" / "corpus" / "heldout_benchmark.jsonl"
 GENERALIZATION_TEST = REPO_ROOT / "tests" / "unit" / "test_prompt_paraphrase_generalization.py"
 
+# Every text an evaluation harness scores. Nothing here — nor a near-duplicate of
+# it — may enter train/val.
+_EVAL_CORPORA = (ARGUS_CORPUS, ARGUS_CORPUS.with_name("domain_holdout.jsonl"), HELDOUT_BENCHMARK)
+
 MAX_CHARS = 2000  # image OCR text is not 12k chars long
+FUZZY_THRESHOLD = 0.72  # char-shingle Jaccard; a paraphrase/OCR-variant of an eval item lands above this
 
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).lower()).strip()
 
 
-def _holdout_keys() -> set:
-    keys = set()
-    for corpus_path in (ARGUS_CORPUS, ARGUS_CORPUS.with_name("domain_holdout.jsonl")):
+def _eval_texts() -> list:
+    texts = []
+    for corpus_path in _EVAL_CORPORA:
+        if not corpus_path.is_file():
+            continue
         for line in corpus_path.read_text().splitlines():
             line = line.strip()
             if line:
-                keys.add(_norm(json.loads(line)["text"]))
-    # ADVERSARIAL_BENIGN list from the generalization test
+                texts.append(json.loads(line)["text"])
     src = GENERALIZATION_TEST.read_text()
     block = re.search(r"ADVERSARIAL_BENIGN\s*=\s*\[(.*?)\]", src, re.S)
     if block:
-        for m in re.finditer(r'"([^"]+)"', block.group(1)):
-            keys.add(_norm(m.group(1)))
-    return keys
+        texts.extend(m.group(1) for m in re.finditer(r'"([^"]+)"', block.group(1)))
+    return texts
 
 
-def _from_public(holdout: set) -> List[Tuple[str, int, str]]:
-    from datasets import concatenate_datasets, load_dataset
+def _holdout_keys() -> set:
+    return {_norm(t) for t in _eval_texts()}
+
+
+def _fuzzy_holdout() -> NearDupChecker:
+    """Near-duplicate index over every evaluation text; ``.is_near(t)`` gates
+    each candidate row on top of the exact ``_holdout_keys`` check."""
+    return NearDupChecker(_eval_texts(), threshold=FUZZY_THRESHOLD)
+
+
+# Public binary prompt-injection sets, all read from the local HF cache. The
+# jayavibhav set (~262k train rows, ~47% injection, includes non-Latin-script
+# rows) is the backbone; deepset + safe-guard are kept for their distinct
+# chatbot-style phrasing. Only the *train* split of each is pulled — the
+# jayavibhav *test* split is frozen separately as the held-out benchmark.
+_PUBLIC_SETS = (
+    ("deepset/prompt-injections", ("train",)),
+    ("xTRam1/safe-guard-prompt-injection", ("train",)),
+    ("jayavibhav/prompt-injection", ("train",)),
+)
+
+
+def _from_public(holdout: set, fuzzy: Optional[NearDupChecker] = None) -> List[Tuple[str, int, str]]:
+    from datasets import load_dataset
 
     rows: List[Tuple[str, int, str]] = []
-    for name in ("deepset/prompt-injections", "xTRam1/safe-guard-prompt-injection"):
+    dropped_fuzzy = 0
+    for name, splits in _PUBLIC_SETS:
         ds = load_dataset(name)
-        merged = concatenate_datasets([ds[s] for s in ds])
-        for rec in merged:
-            text = (rec["text"] or "").strip()[:MAX_CHARS]
-            if len(text) < 4:
+        source_name = name.split("/")[-1]
+        for split in splits:
+            if split not in ds:
                 continue
-            if _norm(text) in holdout:
-                continue
-            source_name = name.split("/")[-1]
-            group = hashlib.sha256(_norm(text).encode()).hexdigest()[:16]
-            rows.append((text, int(rec["label"]), "public:%s:%s" % (source_name, group)))
+            texts = ds[split]["text"]          # column access — far faster than per-row dicts
+            labels = ds[split]["label"]
+            for raw, label in zip(texts, labels):
+                text = (raw or "").strip()[:MAX_CHARS]
+                if len(text) < 4 or _norm(text) in holdout:
+                    continue
+                if fuzzy is not None and fuzzy.is_near(text):
+                    dropped_fuzzy += 1
+                    continue
+                group = hashlib.sha256(_norm(text).encode()).hexdigest()[:16]
+                rows.append((text, int(label), "public:%s:%s" % (source_name, group)))
+    if dropped_fuzzy:
+        print("public: dropped %d rows as near-duplicates of an eval text" % dropped_fuzzy)
     return rows
 
 
-def _from_synthetic(holdout: set, multiplier: int, seed: int) -> List[Tuple[str, int, str]]:
+def _from_synthetic(holdout: set, multiplier: int, seed: int,
+                    fuzzy: Optional[NearDupChecker] = None) -> List[Tuple[str, int, str]]:
     import build_prompt_corpus as bpc
 
     rows: List[Tuple[str, int, str]] = []
+    dropped_fuzzy = 0
     for it in bpc.build(multiplier=multiplier, seed=seed):
         if _norm(it.text) in holdout:
             continue
@@ -104,12 +148,19 @@ def _from_synthetic(holdout: set, multiplier: int, seed: int) -> List[Tuple[str,
                 generator = random.Random("%s:%s:%s" % (seed, it.text, augmentation))
                 variants.append(bpc.ATTACK_AUGS[augmentation](it.text, generator))
         for text in variants:
-            if _norm(text[:MAX_CHARS]) not in holdout:
-                rows.append((text[:MAX_CHARS], 0 if not it.is_attack else 1, "synthetic:%s" % it.group))
+            if _norm(text[:MAX_CHARS]) in holdout:
+                continue
+            if fuzzy is not None and fuzzy.is_near(text[:MAX_CHARS]):
+                dropped_fuzzy += 1
+                continue
+            rows.append((text[:MAX_CHARS], 0 if not it.is_attack else 1, "synthetic:%s" % it.group))
+    if dropped_fuzzy:
+        print("synthetic: dropped %d rows as near-duplicates of an eval text" % dropped_fuzzy)
     return rows
 
 
-def _from_ocr_captures(holdout: set, path: pathlib.Path) -> List[Tuple[str, int, str]]:
+def _from_ocr_captures(holdout: set, path: pathlib.Path,
+                       fuzzy: Optional[NearDupChecker] = None) -> List[Tuple[str, int, str]]:
     """Real OCR output over a labelled image corpus (extract_ocr_captures.py).
     This is the highest-value negative/positive source — the exact text
     distribution the classifier sees at scan time."""
@@ -122,6 +173,8 @@ def _from_ocr_captures(holdout: set, path: pathlib.Path) -> List[Tuple[str, int,
         rec = json.loads(line)
         text = (rec["text"] or "").strip()[:MAX_CHARS]
         if len(text) < 4 or _norm(text) in holdout:
+            continue
+        if fuzzy is not None and fuzzy.is_near(text):
             continue
         image_id = rec.get("image_id")
         if not image_id:
@@ -144,14 +197,21 @@ def _split_rows(rows, val_frac, seed):
     return splits
 
 
-def _augment_training_rows(rows, excluded, seed):
+def _augment_training_rows(rows, excluded, seed, max_added=120000):
+    """Add OCR-confusion / letter-transposition variants of short public rows so
+    chatbot-style phrasing also appears in the image-OCR distribution. Capped
+    (``max_added``) and applied to a deterministic shuffled subset so it does not
+    balloon a large public pool."""
     import build_prompt_corpus as builder
 
     augmented = list(rows)
     seen = {_norm(text) for text, _, _ in rows} | excluded
-    for text, label, source in rows:
-        if not source.startswith("public:") or len(text) > 600:
-            continue
+    candidates = [r for r in rows if r[2].startswith("public:") and len(r[0]) <= 600]
+    random.Random("aug-order:%s" % seed).shuffle(candidates)
+    added = 0
+    for text, label, source in candidates:
+        if max_added and added >= max_added:
+            break
         generator = random.Random("ocr-domain:%s:%s" % (seed, _norm(text)))
         words = text.split()
         transposed = []
@@ -166,6 +226,7 @@ def _augment_training_rows(rows, excluded, seed):
             if key not in seen and len(key) >= 4:
                 augmented.append((variant, label, source))
                 seen.add(key)
+                added += 1
     return augmented
 
 
@@ -179,16 +240,24 @@ def main(argv) -> int:
     ap.add_argument("--synthetic-multiplier", type=int, default=10)
     ap.add_argument("--max-benign-ratio", type=float, default=1.6,
                     help="cap benign:injection so the model is not trained to say 'safe'")
+    ap.add_argument("--max-public-per-class", type=int, default=50000,
+                    help="cap rows drawn from public datasets per class (deterministic sample); "
+                         "synthetic image-domain and real-OCR rows are never capped so they are "
+                         "not drowned out. 0 = no cap.")
     ap.add_argument("--seed", type=int, default=20260908)
+    ap.add_argument("--fail-on-leak", action="store_true",
+                    help="exit non-zero if the split audit finds any train/eval or train/val leak")
     args = ap.parse_args(argv)
 
     random.seed(args.seed)
     holdout = _holdout_keys()
-    print("held out %d normalized texts (ARGUS corpus + adversarial probes)" % len(holdout))
+    fuzzy = _fuzzy_holdout()
+    print("held out %d normalized texts + fuzzy index over %d eval texts"
+          % (len(holdout), len(fuzzy)))
 
-    rows = (_from_public(holdout)
-            + _from_synthetic(holdout, args.synthetic_multiplier, args.seed)
-            + _from_ocr_captures(holdout, args.ocr_captures))
+    rows = (_from_public(holdout, fuzzy)
+            + _from_synthetic(holdout, args.synthetic_multiplier, args.seed, fuzzy)
+            + _from_ocr_captures(holdout, args.ocr_captures, fuzzy))
 
     # dedup by normalized text, injection wins ties
     by_key: Dict[str, Tuple[str, int, str]] = {}
@@ -199,6 +268,22 @@ def main(argv) -> int:
         if k not in by_key or label > by_key[k][1]:
             by_key[k] = (text, label, source)
     rows = list(by_key.values())
+
+    # Cap the public contribution per class (jayavibhav alone is ~260k rows and
+    # would otherwise dilute the ARGUS-domain synthetic + real-OCR signal to a
+    # fraction of a percent). Deterministic sample; synthetic / ocr_capture kept.
+    if args.max_public_per_class:
+        kept: List[Tuple[str, int, str]] = []
+        for label in (0, 1):
+            pub = [r for r in rows if r[1] == label and r[2].startswith("public:")]
+            other = [r for r in rows if r[1] == label and not r[2].startswith("public:")]
+            random.shuffle(pub)
+            kept.extend(other + pub[: args.max_public_per_class])
+        dropped = len(rows) - len(kept)
+        if dropped:
+            print("capped public rows: dropped %d (keeping <=%d public per class)"
+                  % (dropped, args.max_public_per_class))
+        rows = kept
 
     inj = [r for r in rows if r[1] == 1]
     ben = [r for r in rows if r[1] == 0]
@@ -217,7 +302,10 @@ def main(argv) -> int:
     splits["train"] = _augment_training_rows(splits["train"], excluded, args.seed)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    manifest: Dict[str, object] = {"held_out": len(holdout), "max_chars": MAX_CHARS, "splits": {}}
+    audit = _audit_splits(splits, seed=args.seed)
+    manifest: Dict[str, object] = {"held_out": len(holdout), "max_chars": MAX_CHARS,
+                                   "fuzzy_threshold": FUZZY_THRESHOLD, "audit": audit,
+                                   "splits": {}}
     for name, split_rows in splits.items():
         path = args.out / ("prompt_corpus.%s.jsonl" % name)
         with path.open("w") as fh:
@@ -245,7 +333,65 @@ def main(argv) -> int:
               % (name, len(split_rows), n_inj, len(split_rows) - n_inj, rel))
 
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    print("\n=== split audit ===")
+    for key, value in audit.items():
+        print("  %-28s %s" % (key, value))
+    hard = (audit["shared_source_groups_train_val"]
+            + audit["fuzzy_eval_in_train"]
+            + audit["exact_eval_in_train"])
+    if hard:
+        print("\nLEAK: %d hard leak(s) — train shares content with an eval corpus or across splits" % hard)
+        if args.fail_on_leak:
+            return 1
     return 0
+
+
+def _nonlatin_ratio(texts) -> float:
+    n = sum(1 for t in texts if t and sum(ord(c) > 592 for c in t) >= 3)
+    return round(n / max(len(texts), 1), 4)
+
+
+def _audit_splits(splits, seed: int) -> Dict[str, object]:
+    """Leakage + balance audit written into manifest.json. ``build_model.py``
+    reads the hard-leak counters and refuses to build when any is non-zero."""
+    train, val = splits["train"], splits["val"]
+    train_groups = {s for _, _, s in train}
+    val_groups = {s for _, _, s in val}
+    shared = train_groups & val_groups
+
+    train_texts = [t for t, _, _ in train]
+    rng = random.Random(seed)
+    val_sample = [t for t, _, _ in rng.sample(val, min(len(val), 4000))]
+    train_sample = rng.sample(train_texts, min(len(train_texts), 25000))
+    fuzzy_val = NearDupChecker(val_sample, threshold=FUZZY_THRESHOLD)
+    fuzzy_val_hits = sum(1 for t in train_sample if fuzzy_val.is_near(t))
+
+    eval_texts = _eval_texts()
+    fuzzy_eval = NearDupChecker(eval_texts, threshold=FUZZY_THRESHOLD)
+    eval_norm = {_norm(t) for t in eval_texts}
+    # eval-in-train is a hard gate: scan every train row, not a sample.
+    fuzzy_eval_hits = sum(1 for t in train_texts if fuzzy_eval.is_near(t))
+    exact_eval_hits = sum(1 for t in train_texts if _norm(t) in eval_norm)
+
+    by_src_train: Dict[str, int] = {}
+    for _, _, s in train:
+        by_src_train[s.split(":")[0]] = by_src_train.get(s.split(":")[0], 0) + 1
+
+    return {
+        "train_rows": len(train),
+        "val_rows": len(val),
+        "train_injection_frac": round(sum(l for _, l, _ in train) / max(len(train), 1), 4),
+        "val_injection_frac": round(sum(l for _, l, _ in val) / max(len(val), 1), 4),
+        "shared_source_groups_train_val": len(shared),
+        "fuzzy_train_in_val_sample": fuzzy_val_hits,
+        "fuzzy_train_in_val_sample_scanned": len(train_sample),
+        "exact_eval_in_train": exact_eval_hits,
+        "fuzzy_eval_in_train": fuzzy_eval_hits,
+        "train_nonlatin_ratio": _nonlatin_ratio(train_texts),
+        "val_nonlatin_ratio": _nonlatin_ratio([t for t, _, _ in val]),
+        "train_by_source": by_src_train,
+    }
 
 
 if __name__ == "__main__":
