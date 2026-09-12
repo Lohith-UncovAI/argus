@@ -78,6 +78,11 @@ def main(argv) -> int:
                     help="resume from the latest checkpoint under <out>/_hf (same --out, --epochs is the "
                          "TOTAL epoch count to reach, not additional epochs). For continuing a run across "
                          "several short foreground windows on a contended GPU.")
+    ap.add_argument("--save-steps", type=int, default=0,
+                    help="checkpoint every N steps instead of every epoch (also sets eval_strategy to "
+                         "match, as transformers requires with load_best_model_at_end). Use when one "
+                         "epoch does not fit a single foreground window, so --resume has something to "
+                         "resume from partway through an epoch.")
     ap.add_argument("--max-train-rows", type=int, default=0,
                     help="if >0, subsample the training split to this many rows (keeps every "
                          "contrastive-negation / OCR-capture / hard-negative row, samples the rest). "
@@ -173,11 +178,15 @@ def main(argv) -> int:
                 "recall": recall_score(labels, pred, zero_division=0),
                 "f1": f1_score(labels, pred, zero_division=0)}
 
+    step_kwargs = ({"eval_strategy": "steps", "save_strategy": "steps",
+                    "eval_steps": args.save_steps, "save_steps": args.save_steps,
+                    "save_total_limit": 5}
+                   if args.save_steps else {"eval_strategy": "epoch", "save_strategy": "epoch"})
     targs = TrainingArguments(
         output_dir=str(args.out / "_hf"), num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size, per_device_eval_batch_size=64,
-        learning_rate=args.lr, warmup_ratio=0.1, eval_strategy="epoch",
-        save_strategy="epoch", load_best_model_at_end=True, metric_for_best_model="f1",
+        learning_rate=args.lr, warmup_ratio=0.1, **step_kwargs,
+        load_best_model_at_end=True, metric_for_best_model="f1",
         greater_is_better=True, logging_steps=50,
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
