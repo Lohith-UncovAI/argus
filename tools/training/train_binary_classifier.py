@@ -74,6 +74,10 @@ def main(argv) -> int:
     ap.add_argument("--hard-negative-weight", type=float, default=3.0,
                     help="loss multiplier for contrastive-negation and vocabulary-trap benign examples")
     ap.add_argument("--export-onnx", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="resume from the latest checkpoint under <out>/_hf (same --out, --epochs is the "
+                         "TOTAL epoch count to reach, not additional epochs). For continuing a run across "
+                         "several short foreground windows on a contended GPU.")
     ap.add_argument("--max-train-rows", type=int, default=0,
                     help="if >0, subsample the training split to this many rows (keeps every "
                          "contrastive-negation / OCR-capture / hard-negative row, samples the rest). "
@@ -181,7 +185,18 @@ def main(argv) -> int:
 
     trainer = DistilTrainer(model=model, args=targs, train_dataset=d_tr, eval_dataset=d_va,
                             processing_class=tok, compute_metrics=metrics)
-    trainer.train()
+
+    resume_from = None
+    if args.resume:
+        ckpt_dir = args.out / "_hf"
+        checkpoints = sorted(ckpt_dir.glob("checkpoint-*"),
+                             key=lambda p: int(p.name.split("-")[-1])) if ckpt_dir.is_dir() else []
+        if not checkpoints:
+            raise SystemExit("--resume given but no checkpoint-* found under %s" % ckpt_dir)
+        resume_from = str(checkpoints[-1])
+        print("resuming from %s" % resume_from)
+
+    trainer.train(resume_from_checkpoint=resume_from)
     val = trainer.evaluate()
     print("VAL:", {k: round(v, 4) for k, v in val.items() if isinstance(v, float)})
 
