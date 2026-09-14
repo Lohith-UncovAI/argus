@@ -180,7 +180,7 @@ def main(argv) -> int:
 
     step_kwargs = ({"eval_strategy": "steps", "save_strategy": "steps",
                     "eval_steps": args.save_steps, "save_steps": args.save_steps,
-                    "save_total_limit": 5}
+                    "save_total_limit": 2}
                    if args.save_steps else {"eval_strategy": "epoch", "save_strategy": "epoch"})
     targs = TrainingArguments(
         output_dir=str(args.out / "_hf"), num_train_epochs=args.epochs,
