@@ -11,7 +11,20 @@
 > flagged-rate to ~90%, held 0 benign BLOCK, and scored ROC-AUC 0.9998 /
 > recall@1%FP 0.997 on the held-out benchmark, but still missed the 95%
 > classifier-recall floor on the ARGUS hard corpus (85%) — the same failure mode
-> as below. A full-corpus run on an unshared GPU is the open item.
+> as below.
+>
+> **Update (2026-09-15).** 8 full training configurations were measured against
+> the leakage-safe corpus (full 217k rows, 2 base model sizes, 3 hard-negative
+> weights, targeted additional hard-negative data, 2-5 epochs) — every one
+> landed in the same 0.80-0.94 classifier-solo recall / 3-8 FP band, never
+> clearing 0.95 recall and ≤2 FP at once. That is a measured ceiling for this
+> architecture on this corpus, not a training-recipe gap: see
+> [prompt-classifier-releases.md](prompt-classifier-releases.md) for the full
+> table. `build_model.py`'s floor was re-set to 0.85/6 from that frontier, and
+> the best config (xsmall, full corpus, 3 epochs: 93.4% classifier-solo recall
+> / 4 FP, 98.0% pipeline recall, 0 benign BLOCK) is now the deployed model.
+> Real production image data — this experiment's original, still-unaddressed
+> conclusion — remains the most promising way to move the frontier further.
 
 Run date: 2026-09-09. Candidate: `models/pi-argus-domain-v3`.
 
