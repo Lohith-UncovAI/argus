@@ -41,29 +41,12 @@ CORPUS_DIR = REPO_ROOT / "tools" / "training" / "corpus"
 HELD_OUT = REPO_ROOT / "tools" / "evaluation" / "corpus" / "prompt_text_corpus.jsonl"
 
 # A model below any of these on the held-out corpus is a regression — do not ship.
-#
-# classifier_operating_recall / classifier_benign_fp_max (2026-09-14, see
-# docs/prompt-classifier-releases.md "Why these floors"): the original 0.95 / 2
-# values were set from a checkpoint later found to have train/eval split
-# contamination, before an independent held-out benchmark existed. Against the
-# rebuilt leakage-safe corpus, 8 honest training configurations (2 base model
-# sizes, 3 hard-negative weights, 2-5 epochs, 2 corpus versions) were measured
-# and every one landed in the 0.80-0.94 recall / 3-8 FP band on the classifier's
-# OWN solo score, evaluated in isolation. This is the classifier's evidence-only,
-# corroboration-gated signal — it caps at HIGHLY_LIKELY and cannot BLOCK alone
-# (see classify.py's corroboration rule) — and pipeline-level behaviour was
-# excellent in every one of those 8 configs (96-98% recall, zero benign_plain /
-# benign_trap BLOCK). The floors below are set from that measured frontier with
-# headroom, not from the champion's own score: they will fail a config that
-# regresses meaningfully, but no longer fail every config that is not the single
-# best one seen so far. Revisit upward once real production image data (the
-# still-open gap; see docs/domain-training-experiment.md) narrows the frontier.
 FLOORS = {
     "flat_attack_recall_pct": 97.0,      # tls-001 (no geometry in the flat harness) may miss
     "benign_plain_blocked": 0,
     "benign_trap_blocked": 0,
-    "classifier_operating_recall": 0.85,
-    "classifier_benign_fp_max": 6,
+    "classifier_operating_recall": 0.95,
+    "classifier_benign_fp_max": 2,       # doc-005 / ml-b01, both corroboration-bounded to REVIEW
     "held_out_benchmark_recall_at_1pct_fp": 0.80,  # independent externally-sourced generalization gate
     "held_out_benchmark_roc_auc": 0.95,
 }
