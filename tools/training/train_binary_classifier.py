@@ -140,6 +140,26 @@ def main(argv) -> int:
     d_tr, d_va = ds(tr_os), ds(va)
     print("train rows after oversampling hard negatives: %d (inj=%d)" % (len(tr_os), n_inj))
 
+    # Model selection (load_best_model_at_end) on a val split representative of the
+    # ARGUS-specific hard categories, not the public-data-heavy val split as a whole.
+    # `va` is ~90% public chatbot-style rows; the synthetic image-domain augmentations
+    # and real-OCR captures are the rows that actually resemble what fails at scan time
+    # (document-style benign, obfuscation, multilingual, garbled OCR). Selecting the
+    # "best" checkpoint by loss/F1 on the public-heavy mix can pick a checkpoint that is
+    # not best on what we actually evaluate against (tools/evaluation/corpus/).
+    va_hard = [r for r in va if r.get("source", "").startswith(("synthetic:", "ocr_capture:"))]
+    if va_hard:
+        d_va_hard = ds(va_hard)
+        eval_datasets = {"full": d_va, "hard": d_va_hard}
+        best_metric = "eval_hard_f1"
+        print("model selection: %d/%d val rows are synthetic/ocr_capture (hard-category "
+              "representative) -> load_best_model_at_end uses '%s'" % (len(va_hard), len(va), best_metric))
+    else:
+        eval_datasets = d_va
+        best_metric = "f1"
+        print("WARNING: no synthetic/ocr_capture rows in val — falling back to whole-val "
+              "F1 for model selection (this corpus may need --ocr-captures or a different seed)")
+
     model = AutoModelForSequenceClassification.from_pretrained(
         args.base_model, num_labels=2,
         id2label={0: "SAFE", 1: "INJECTION"}, label2id={"SAFE": 0, "INJECTION": 1}).float()
@@ -186,13 +206,13 @@ def main(argv) -> int:
         output_dir=str(args.out / "_hf"), num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size, per_device_eval_batch_size=64,
         learning_rate=args.lr, warmup_ratio=0.1, **step_kwargs,
-        load_best_model_at_end=True, metric_for_best_model="f1",
+        load_best_model_at_end=True, metric_for_best_model=best_metric,
         greater_is_better=True, logging_steps=50,
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
         report_to=[], seed=args.seed)
 
-    trainer = DistilTrainer(model=model, args=targs, train_dataset=d_tr, eval_dataset=d_va,
+    trainer = DistilTrainer(model=model, args=targs, train_dataset=d_tr, eval_dataset=eval_datasets,
                             processing_class=tok, compute_metrics=metrics)
 
     resume_from = None
@@ -228,6 +248,7 @@ def main(argv) -> int:
     (args.out / "metrics.json").write_text(json.dumps(
         {"base_model": args.base_model, "teacher_model": args.teacher_model,
          "val": val, "temperature": temperature,
+         "model_selection_metric": best_metric, "model_selection_val_hard_rows": len(va_hard),
          "corpus_manifest": json.loads((args.corpus_dir / "manifest.json").read_text())
          if (args.corpus_dir / "manifest.json").is_file() else None}, indent=2))
 
