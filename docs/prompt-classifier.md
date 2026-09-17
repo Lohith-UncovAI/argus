@@ -284,7 +284,7 @@ BLOCK rate stays low (corroboration keeps lone classifier hits at REVIEW) and a
 few `multilingual_benign` vocabulary traps still REVIEW-FP — a multilingual base
 (`mdeberta-v3-base`) is the real fix when one can be staged.
 
-## Measured results — no model currently passes the gate (2026-09-15)
+## Measured results — no model currently passes the gate (2026-09-17)
 
 **Status: `models/` holds no deployed classifier.** A prior deployed checkpoint
 (measured against a 132-item corpus, since found to have train/eval split
@@ -292,9 +292,10 @@ contamination — see `docs/domain-training-experiment.md`) has been retired and
 its files are no longer on this host. The corpus, near-duplicate leakage
 exclusion, and independent held-out benchmark were rebuilt (271-item
 `prompt_text_corpus.jsonl` + 2 000-item `heldout_benchmark.jsonl`; see
-"The dataset is the product" above), and 8 training configurations were
-measured against the rebuilt pipeline. **None cleared the gate.** The closest
-(deberta-v3-xsmall, full 217k-row corpus, 3 epochs) scored:
+"The dataset is the product" above), and ~15 configurations — single models
+plus 3-model ensembles (`tools/evaluation/evaluate_ensemble.py`) — were
+measured against the rebuilt pipeline. **None cleared the gate.** The best
+single model (deberta-v3-xsmall, full 217k-row corpus, 3 epochs) scored:
 
 - pipeline (rules + semantic + classifier): **98.0% recall, 0 benign_plain /
   benign_trap BLOCK** — every benign item that was flagged came back REVIEW,
@@ -306,18 +307,28 @@ measured against the rebuilt pipeline. **None cleared the gate.** The closest
 - independent held-out benchmark (classifier alone): ROC-AUC 0.9997, recall
   @ 1% FP = 99.6%.
 
-The full 8-configuration table (2 base model sizes, 3 hard-negative weights,
-targeted additional hard-negative data, 2-5 epochs) is in
-[prompt-classifier-releases.md](prompt-classifier-releases.md) — every
-configuration landed in the same 0.80-0.94 classifier-solo recall / 3-8 FP
-band. This looks like a real ceiling for a small transformer classifier
-evaluated solo against this corpus, not a tuning gap; real production image
-data (the original gap identified in `docs/domain-training-experiment.md`,
-still unaddressed) is the most likely way to move it. The non-passing
-candidate above is kept locally (not in git; `models/` is gitignored) purely
-as a reference point — it must not be deployed via
-`ARGUS_PROMPT_CLASSIFIER_PATH` on the strength of this document; re-run
-`build_model.py` and confirm `floor_met=true` before deploying anything.
+A 3-model ensemble (independent seeds, unanimous-agreement combination) pushed
+the FP≤2 operating point to **90.7% recall** — a real, measured improvement
+over any single model's ~80-85% at that FP level — and, on a corpus with a
+diagnosed and fixed paraphrase-coverage bug (see "Training" and `e2dbf59`),
+a different ensemble reached **97.4% recall at 5 FP**, the best F1 of any
+configuration measured. Neither clears both floors simultaneously.
+
+The full frontier table (single models and ensembles, ~15 configurations:
+2 base model sizes, 3 hard-negative weights, targeted additional hard-negative
+data, 2-5 epochs, a hard-category-aware model-selection metric, 3 combination
+rules) is in [prompt-classifier-releases.md](prompt-classifier-releases.md) —
+every configuration landed in the same 0.80-0.94 single-model / up to
+0.90-0.97 ensembled classifier-solo recall band, always trading off against
+FP. This is now strong, repeated evidence of a real ceiling for a small
+transformer classifier evaluated solo against this corpus, not a tuning gap;
+real production image data (the original gap identified in
+`docs/domain-training-experiment.md`, still unaddressed) is the most likely
+way to move it further. The non-passing candidates are kept locally (not in
+git; `models/` is gitignored) purely as reference points — none may be
+deployed via `ARGUS_PROMPT_CLASSIFIER_PATH` on the strength of this document;
+re-run `build_model.py` and confirm `floor_met=true` before deploying
+anything.
 
 **Design notes that remain accurate regardless of which checkpoint is
 deployed:**
@@ -389,7 +400,7 @@ python tools/training/build_model.py --out models/<candidate-name> --epochs 3
 
 As of 2026-09-15 no build has cleared the floor — see "Measured results"
 above and [prompt-classifier-releases.md](prompt-classifier-releases.md) for
-the 8 measured attempts and where they fell short. `--out` must be a fresh
+the ~15 measured attempts (including ensembles) and where they fell short. `--out` must be a fresh
 directory; on a shared/contended GPU, `--resume` and `--save-steps` (in
 `train_binary_classifier.py`) let a training run continue across several
 short foreground sessions instead of restarting from scratch each time.
@@ -422,7 +433,7 @@ python tools/training/build_model.py --out models/pi-argus --epochs 4
 
 `build_model.py` writes `train_binary_classifier.py`'s `ARGUS_LABEL_MAP`
 defaults (`threshold_block: 0.60`, `threshold_review: 0.35`) into
-`argus_label_map.json` — none of the 8 measured attempts have had these
+`argus_label_map.json` — none of the measured attempts have had these
 re-tuned from a calibration sweep against the rebuilt corpus; do that before
 promoting whichever candidate eventually clears the floor (see "Calibration").
 CUDA training is not bytewise-deterministic; `PROVENANCE.json` pins the recipe.

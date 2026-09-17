@@ -13,16 +13,25 @@
 > classifier-recall floor on the ARGUS hard corpus (85%) — the same failure mode
 > as below.
 >
-> **Update (2026-09-15).** 8 full training configurations have now been measured
-> against the leakage-safe corpus (full 217k rows, 2 base model sizes, 3
-> hard-negative weights, targeted additional hard-negative data, 2-5 epochs) —
-> every one landed in the same 0.80-0.94 classifier-solo recall / 3-8 FP band,
-> never clearing the required 0.95 recall / ≤2 FP. Full table in
-> [prompt-classifier-releases.md](prompt-classifier-releases.md). **No model
-> currently passes the gate; `models/` holds no deployed candidate.** This
-> looks like a measured ceiling for this architecture on this corpus, not a
-> training-recipe gap — real production image data, this experiment's original
-> and still-unaddressed conclusion, remains the most promising way to move it.
+> **Update (2026-09-15/17).** ~15 training configurations have now been measured
+> against the leakage-safe corpus — single models (2 base model sizes, 3
+> hard-negative weights, targeted additional hard-negative data, 2-5 epochs,
+> a hard-category-aware model-selection metric) and 3-model ensembles under
+> several combination rules. Along the way a real, diagnosed bug was found and
+> fixed: synthetic paraphrase templates whose *clean* text landed near a
+> held-out eval sentence were correctly excluded from training, but their
+> leetspeak/OCR-noise obfuscated derivatives survived the same filter — so
+> training had many mangled copies of some attack phrasings and almost no
+> clean ones (see `e2dbf59`). Fixing it closed that specific gap (verified by
+> exact before/after diff), and the best ensemble reached 97.4% classifier-solo
+> recall at 5 FP — the best F1 of any configuration measured. **Still, no
+> configuration has cleared 0.95 recall AND ≤2 FP simultaneously; `models/`
+> holds no deployed candidate.** Full tables in
+> [prompt-classifier-releases.md](prompt-classifier-releases.md). This is now
+> strong, repeated evidence of a measured ceiling for this architecture on this
+> corpus, not a training-recipe gap — real production image data, this
+> experiment's original and still-unaddressed conclusion, remains the most
+> promising way to move it.
 
 Run date: 2026-09-09. Candidate: `models/pi-argus-domain-v3`.
 
