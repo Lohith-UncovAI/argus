@@ -22,12 +22,17 @@ class WorkerRequest(BaseModel):
     mode: str = "fast"
     use_profile: str = "AGENT_WITH_TOOLS"
     max_pixels_per_frame: int = 50_000_000
+    max_width: int = 20_000
+    max_height: int = 20_000
     max_total_decoded_pixels: int = 150_000_000
     max_transformed_pixels: int = 300_000_000
     max_frames: int = 30
     max_artifacts: int = 200
     max_artifact_bytes: int = 250_000_000
+    max_input_bytes: int = 25_000_000
     max_text_bytes: int = 2_000_000
+    extract_frames: bool = True
+    extract_thumbnails: bool = False
     deadline_epoch: float = 0.0
 
 

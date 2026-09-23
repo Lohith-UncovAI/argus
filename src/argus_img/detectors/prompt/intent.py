@@ -26,8 +26,19 @@ _ATTACKER_DISCUSSION_RE = re.compile(
 )
 
 
+def _ocr_normalize(lower: str) -> str:
+    """Repair the OCR/typo mangling that most often defeats the marker checks:
+    dropped spaces in common negation words ("donot"/"dont" -> "do not",
+    "cannot" -> "can not") and collapsed whitespace. Deliberately conservative
+    — only space-repair of function words, no semantic rewriting.
+    """
+    s = re.sub(r"\bdo\s*n['o]?t\b", "do not", lower)
+    s = re.sub(r"\bcan\s*not\b", "can not", s)
+    return re.sub(r"\s+", " ", s)
+
+
 def classify_text_context(text: str) -> str:
-    lower = text.lower()
+    lower = _ocr_normalize(text.lower())
     if _QUOTED_TRIGGER_RE.search(lower):
         return "quoted"
     if _ATTACKER_DISCUSSION_RE.search(lower):
@@ -38,7 +49,10 @@ def classify_text_context(text: str) -> str:
     # as prompt injection, ... tells a model to disregard prior
     # instructions") is educational framing, not an active attack, and must
     # not be allowed to short-circuit past these markers.
-    warning_markers = ["warning", "warns", "do not follow", "do not obey", "dangerous example"]
+    warning_markers = ["warning", "warns", "do not follow", "do not obey",
+                       "dangerous example", "do not follow that", "do not obey that",
+                       "any text in a photo", "any text in an image",
+                       "embedded in an image", "embedded in images"]
     if any(marker in lower for marker in warning_markers):
         return "warning"
     # Strip email-like tokens (anything containing @) and bare domain names before

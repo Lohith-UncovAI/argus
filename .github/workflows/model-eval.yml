@@ -1,0 +1,49 @@
+name: model-eval
+
+# Manual gate for the local ML prompt-injection classifier. Runs on the training
+# host (self-hosted runner) where the model checkpoint and the HF dataset cache
+# live — CI runners have neither. Trigger from the Actions tab after publishing a
+# candidate to the model registry and staging it locally.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_path:
+        description: "Absolute path to the staged model directory on the runner"
+        required: true
+      backend:
+        description: "transformers | onnx"
+        required: false
+        default: "onnx"
+
+jobs:
+  evaluate:
+    runs-on: [self-hosted, training]
+    env:
+      ARGUS_PROMPT_CLASSIFIER_PATH: ${{ github.event.inputs.model_path }}
+      ARGUS_PROMPT_CLASSIFIER_BACKEND: ${{ github.event.inputs.backend }}
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --extra training
+      - name: Preflight the configured model
+        run: uv run python -m argus_img.detectors.prompt.classifier
+      - name: Calibration + held-out benchmark
+        run: |
+          uv run python tools/evaluation/calibrate_prompt_detectors.py \
+            --output model-eval-report.json
+      - name: Enforce the metrics floor (build_model gate, evaluate-only)
+        run: |
+          uv run python tools/training/build_model.py \
+            --out "$ARGUS_PROMPT_CLASSIFIER_PATH" --skip-train
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-eval-report
+          path: |
+            model-eval-report.json
+            ${{ github.event.inputs.model_path }}/PROVENANCE.json
+            ${{ github.event.inputs.model_path }}/BUILD_REPORT.json
+            ${{ github.event.inputs.model_path }}/EVAL_SUMMARY.json

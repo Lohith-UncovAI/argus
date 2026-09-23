@@ -1,0 +1,67 @@
+{
+  "corpus_size": 271,
+  "overall_recall_pct": 52.3,
+  "overall_false_positive_rate_pct": 10.0,
+  "by_category": {
+    "benign_plain": {
+      "total": 25,
+      "flagged": 0,
+      "blocked": 0
+    },
+    "benign_trap": {
+      "total": 44,
+      "flagged": 0,
+      "blocked": 0
+    },
+    "compound_attack": {
+      "total": 15,
+      "flagged": 7,
+      "blocked": 5
+    },
+    "direct_attack": {
+      "total": 30,
+      "flagged": 22,
+      "blocked": 22
+    },
+    "document_style_benign": {
+      "total": 17,
+      "flagged": 2,
+      "blocked": 0
+    },
+    "garbled_ocr_attack": {
+      "total": 24,
+      "flagged": 11,
+      "blocked": 8
+    },
+    "multilingual_attack": {
+      "total": 35,
+      "flagged": 2,
+      "blocked": 0
+    },
+    "multilingual_benign": {
+      "total": 22,
+      "flagged": 0,
+      "blocked": 0
+    },
+    "obfuscated_attack": {
+      "total": 17,
+      "flagged": 14,
+      "blocked": 14
+    },
+    "paraphrased_attack": {
+      "total": 20,
+      "flagged": 20,
+      "blocked": 19
+    },
+    "quoted_discussed": {
+      "total": 12,
+      "flagged": 10,
+      "blocked": 0
+    },
+    "tiled_split_attack": {
+      "total": 10,
+      "flagged": 3,
+      "blocked": 3
+    }
+  }
+}

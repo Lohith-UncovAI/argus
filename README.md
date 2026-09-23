@@ -6,6 +6,12 @@ The system does not claim an image is universally safe. Unknown encrypted stegan
 
 ## Quick Start
 
+Install the locked Python environment with `uv sync --locked --extra dev`.
+Image-level prompt detection requires a local OCR backend. On Debian/Ubuntu,
+install `tesseract-ocr tesseract-ocr-eng` before running the examples or tests.
+The required `wordninja` package supplies the vocabulary for OCR repair,
+split-word reassembly, and the classifier's gibberish filter.
+
 ```bash
 PYTHONPATH=src python3 scripts/generate_test_images.py
 PYTHONPATH=src python3 -m argus_img.cli.main scan tests/fixtures/clean.png --output report.json
@@ -39,9 +45,11 @@ Implemented baseline:
 - Tesseract OCR adapter when the local binary is installed.
 - pyzbar QR/barcode adapter when local libraries are available.
 - YAML prompt-injection rules and deterministic intent context.
+- CPU-only heuristic injection scorer (token/bigram/structural/paraphrase banks), with text-candidate decoders (leetspeak, OCR word re-segmentation, de-spacing, OCR spell-repair) and geometry-gated reassembly of injections split across image regions.
+- Optional local ML prompt-injection classifier (`ARGUS_PROMPT_CLASSIFIER_PATH`); evidence only, corroboration-gated for BLOCK, `NOT_TESTED` when unconfigured. Reproducible build (`tools/training/build_model.py`) and deploy preflight. See `docs/prompt-classifier.md`.
 - Privacy and phishing heuristics.
 - Structural trailing-byte detection and basic entropy summary.
-- Null/mock interfaces for prompt classifiers, VLMs, watermark detectors, and steganalysis models.
+- Null/mock interfaces for VLMs, watermark detectors, and steganalysis models.
 
 Optional tools such as ExifTool, ClamAV, YARA, Binwalk, zsteg, C2PA, PaddleOCR, and OpenCV degrade to explicit `UNSUPPORTED` or `NOT_TESTED` statuses when unavailable. ExifTool output is parsed locally in JSON mode and precise GPS values are not returned by default.
 

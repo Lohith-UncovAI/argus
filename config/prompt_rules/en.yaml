@@ -29,5 +29,5 @@ rules:
     severity: high
     languages: [en]
     patterns:
-      - '\b(send|reveal|print|upload)\s+(the\s+)?(api\s*key|token|password|secret|seed phrase)\b'
+      - '\b(send|reveal|print|upload)\s+(the\s+)?(api\s*key|token|password|seed phrase|secret(?!\s+(?:door|garden|room|passage|recipe|ingredient|admirer|santa|handshake|sauce|spot|life|compartment|tunnel|chamber|drawer|staircase|menu|weapon|level|boss|ending|twist|identity|history|world)))\b'
       - '\b(output|print|return|emit)\s+ARGUS[-_\s]*CANARY\b'

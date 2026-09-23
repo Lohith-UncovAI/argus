@@ -26,6 +26,14 @@ detectors:
     category: prompt_injection
     required: true
 
+  # Optional local ML classifier. Evidence only (findings cap at HIGHLY_LIKELY);
+  # NOT_TESTED unless ARGUS_PROMPT_CLASSIFIER_PATH points at a local model.
+  # See docs/prompt-classifier.md.
+  - id: detector:prompt-classifier
+    family: prompt
+    category: prompt_injection
+    required: false
+
   # Malware scanning: mandatory for AGENT_WITH_TOOLS, SECURITY_FORENSICS and RAG_INGESTION.
   # Must complete a real scan execution — UNSUPPORTED is not accepted for mandatory coverage.
   - id: detector:malware-clamav

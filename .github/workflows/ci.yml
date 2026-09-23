@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - name: Install OCR runtime
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Verify schemas are current
@@ -21,3 +23,19 @@ jobs:
           git diff --exit-code schemas
       - name: Run tests
         run: uv run pytest
+
+  prompt-calibration:
+    # Regression gate for the deterministic prompt-injection layers (rule engine
+    # + heuristic scorer). No model weights — runs on a stock runner. The ML
+    # classifier is gated separately by .github/workflows/model-eval.yml on the
+    # training host.
+    runs-on: ubuntu-latest
+    env:
+      ARGUS_OFFLINE_STRICT: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+      - name: Deterministic prompt-layer calibration must not regress
+        run: uv run python tools/evaluation/check_calibration_regression.py

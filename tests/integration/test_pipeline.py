@@ -1,4 +1,4 @@
-from argus_img.core.enums import EpistemicState, PolicyAction, UseProfile
+from argus_img.core.enums import DetectorStatus, EpistemicState, PolicyAction, UseProfile
 from argus_img.core.models import ScanReport, ScanRequest
 from argus_img.orchestration.pipeline import scan_file
 
@@ -65,3 +65,29 @@ def test_malformed_image_quarantines_cleanly(fixture_path, app_config):
     assert report.decision.action == PolicyAction.QUARANTINE
     assert report.findings[0].type == "intake_rejected"
     assert report.artifacts["original"].release_eligible is False
+
+
+def test_configured_invalid_classifier_is_reported_as_error(fixture_path, app_config, monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_PROMPT_CLASSIFIER_PATH", str(tmp_path / "missing-model"))
+    report = scan_file(fixture_path / "clean.png", _human_view("clean.png"), app_config)
+    execution = next(item for item in report.detector_executions
+                     if item.detector_id == "detector:prompt-classifier")
+    assert execution.status == DetectorStatus.ERROR
+    assert report.module_status["prompt_classifier"].status == EpistemicState.ERROR
+
+
+def test_classifier_inference_error_is_not_negative_coverage(fixture_path, app_config, monkeypatch):
+    from argus_img.orchestration import pipeline
+
+    def failed_classifier(*args, errors, **kwargs):
+        errors.append("inference failed")
+        return []
+
+    monkeypatch.setattr(pipeline, "prompt_classifier_available", lambda: True)
+    monkeypatch.setattr(pipeline, "analyze_classifier", failed_classifier)
+    report = scan_file(fixture_path / "clean.png", _human_view("clean.png"), app_config)
+    execution = next(item for item in report.detector_executions
+                     if item.detector_id == "detector:prompt-classifier")
+    assert execution.status == DetectorStatus.ERROR
+    assert execution.state == EpistemicState.ERROR
+    assert report.module_status["prompt_classifier"].reason == "classifier_inference_failed"

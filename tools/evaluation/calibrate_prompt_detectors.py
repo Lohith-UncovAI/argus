@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import argparse
 import pathlib
 import sys
 from dataclasses import dataclass, field
@@ -40,6 +41,13 @@ if str(SRC_ROOT) not in sys.path:
 
 from argus_img.core.enums import PolicyAction
 from argus_img.core.models import TextObservation
+from argus_img.detectors.prompt.classify import analyze_classifier
+from argus_img.detectors.prompt.classifier import (
+    LocalTransformerClassifier,
+    classifier_fingerprint,
+    prompt_classifier_available,
+)
+from argus_img.detectors.prompt.decoders import derive_text_candidates
 from argus_img.detectors.prompt.rules import PromptRuleBundle
 from argus_img.detectors.prompt.semantic import (
     THRESHOLD_BLOCK,
@@ -47,6 +55,8 @@ from argus_img.detectors.prompt.semantic import (
     analyze_semantic,
     score_text,
 )
+
+_CLASSIFIER = LocalTransformerClassifier.from_env() if prompt_classifier_available() else None
 
 CORPUS_PATH = REPO_ROOT / "tools" / "evaluation" / "corpus" / "prompt_text_corpus.jsonl"
 RESULTS_DIR = REPO_ROOT / "tools" / "evaluation" / "results"
@@ -74,6 +84,86 @@ def load_corpus(path: pathlib.Path) -> List[CorpusItem]:
     return items
 
 
+def load_benchmark(path: pathlib.Path) -> List[CorpusItem]:
+    """Held-out benchmark rows carry only {id, text, label, source}; fill the
+    category/context CorpusItem needs so the same code paths apply."""
+    items: List[CorpusItem] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        items.append(CorpusItem(id=rec["id"], text=rec["text"],
+                                category=rec.get("source", "heldout"),
+                                label=rec["label"], context="active",
+                                notes=rec.get("source", "")))
+    return items
+
+
+def report_held_out_benchmark(items: List[CorpusItem]) -> Optional[Dict[str, object]]:
+    """Classifier-only generalization number on an independent, externally-sourced
+    corpus: ROC-AUC plus recall at a 1% and 5% false-positive operating point."""
+    if _CLASSIFIER is None:
+        print("\n=== Held-out benchmark ===\nClassifier not configured — skipping.")
+        return None
+    pos, neg = [], []
+    for item in items:
+        r = _CLASSIFIER.classify_sync(item.text)
+        if r.status != "SUCCESS":
+            continue
+        (pos if item.label == "attack" else neg).append(r.score)
+    if not pos or not neg:
+        print("\n=== Held-out benchmark ===\nBenchmark missing a class — skipping.")
+        return None
+
+    def recall_at_fp(target_fp: float) -> Dict[str, float]:
+        thr = sorted(neg)[min(len(neg) - 1, int(round((1.0 - target_fp) * len(neg))))]
+        rec = sum(1 for s in pos if s >= thr) / len(pos)
+        fp = sum(1 for s in neg if s >= thr) / len(neg)
+        return {"threshold": round(thr, 4), "recall": round(rec, 4), "fp": round(fp, 4)}
+
+    # Mann-Whitney U -> ROC-AUC
+    alls = sorted([(s, 1) for s in pos] + [(s, 0) for s in neg])
+    rank_sum = 0.0
+    i = 0
+    while i < len(alls):
+        j = i
+        while j < len(alls) and alls[j][0] == alls[i][0]:
+            j += 1
+        avg_rank = (i + j - 1) / 2 + 1
+        for k in range(i, j):
+            if alls[k][1] == 1:
+                rank_sum += avg_rank
+        i = j
+    auc = (rank_sum - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
+
+    op = _CLASSIFIER.label_map.threshold_review
+    at_review = {"threshold": round(op, 4),
+                 "recall": round(sum(1 for s in pos if s >= op) / len(pos), 4),
+                 "fp": round(sum(1 for s in neg if s >= op) / len(neg), 4)}
+
+    sn = sorted(neg)
+
+    def _q(frac: float) -> float:
+        return round(sn[min(len(sn) - 1, int(frac * len(sn)))], 4)
+
+    thr_b = _CLASSIFIER.label_map.threshold_block
+
+    report = {"n_attack": len(pos), "n_benign": len(neg), "roc_auc": round(auc, 4),
+              "recall_at_1pct_fp": recall_at_fp(0.01), "recall_at_5pct_fp": recall_at_fp(0.05),
+              "at_operating_review_threshold": at_review,
+              "benign_score_quantiles": [_q(f) for f in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.999)],
+              "benign_score_p50": _q(0.5), "benign_score_p95": _q(0.95),
+              "benign_fp_at_review": at_review["fp"],
+              "thresholds": {"block": thr_b, "review": op}}
+    print("\n=== Held-out benchmark (classifier-only, n=%d attack / %d benign) ===" % (len(pos), len(neg)))
+    print("  ROC-AUC:                 %.4f" % auc)
+    print("  recall @ 1%% FP:          %.3f (thr=%.3f)" % (report["recall_at_1pct_fp"]["recall"], report["recall_at_1pct_fp"]["threshold"]))
+    print("  recall @ 5%% FP:          %.3f (thr=%.3f)" % (report["recall_at_5pct_fp"]["recall"], report["recall_at_5pct_fp"]["threshold"]))
+    print("  recall @ review thr %.2f: %.3f  (FP %.3f)" % (op, at_review["recall"], at_review["fp"]))
+    return report
+
+
 def _obs(item: CorpusItem) -> TextObservation:
     return TextObservation(
         observation_id="observation:calibration:%s" % item.id,
@@ -89,26 +179,52 @@ def _obs(item: CorpusItem) -> TextObservation:
 class PipelineOutcome:
     rule_action: Optional[str]
     semantic_action: Optional[str]
+    classifier_action: Optional[str]
     combined_action: Optional[str]  # None means "not flagged at all"
     raw_score: float
+    classifier_score: Optional[float] = None
 
 
 def run_pipeline(item: CorpusItem) -> PipelineOutcome:
-    """Reproduce the same rule -> semantic wiring as orchestration/pipeline.py."""
+    """Reproduce the rule -> semantic -> classifier wiring of orchestration/pipeline.py."""
     obs = _obs(item)
-    rule_findings = PromptRuleBundle.load_default().analyze_texts([obs], "calibration")
+    derived = derive_text_candidates(obs)
+    derived_map = {obs.observation_id: [d.text for d in derived]} if derived else {}
+    rule_findings = PromptRuleBundle.load_default().analyze_texts(
+        [obs], "calibration", derived_texts=derived_map)
     rule_action = _strongest_action(f.recommended_action for f in rule_findings) if rule_findings else None
-
     rule_covered_obs = {f.observation_ids[0] for f in rule_findings if f.observation_ids}
-    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs)
+
+    semantic_findings = analyze_semantic([obs], "calibration", skip_observation_ids=rule_covered_obs,
+                                         derived_texts=derived_map)
     semantic_action = _strongest_action(f.recommended_action for f in semantic_findings) if semantic_findings else None
 
-    combined = rule_action or semantic_action
+    classifier_action = None
+    classifier_score = None
+    if _CLASSIFIER is not None:
+        corroborated = rule_covered_obs | {
+            oid for f in rule_findings for oid in f.observation_ids
+        } | {oid for f in semantic_findings for oid in f.observation_ids}
+        clf_findings = analyze_classifier([obs], "calibration", classifier=_CLASSIFIER,
+                                          skip_observation_ids=rule_covered_obs,
+                                          corroborated_observation_ids=corroborated,
+                                          derived_texts=derived_map)
+        classifier_action = _strongest_action(f.recommended_action for f in clf_findings) if clf_findings else None
+        result = _CLASSIFIER.classify_sync(item.text)
+        classifier_score = result.score if result.status == "SUCCESS" else None
+
+    # The real pipeline collects findings from all three signals and the policy
+    # engine takes the strongest — a classifier REVIEW never masks a semantic
+    # BLOCK on the same text.
+    _rank = {None: 0, "REVIEW": 1, "BLOCK": 2}
+    combined = max((rule_action, classifier_action, semantic_action), key=lambda a: _rank.get(a, 0))
     return PipelineOutcome(
         rule_action=rule_action,
         semantic_action=semantic_action,
+        classifier_action=classifier_action,
         combined_action=combined,
         raw_score=score_text(item.text)["score"],  # type: ignore[index]
+        classifier_score=classifier_score,
     )
 
 
@@ -147,36 +263,51 @@ def report_pipeline_behaviour(items: List[CorpusItem]) -> Dict[str, object]:
     misses: List[dict] = []
     false_positives: List[dict] = []
 
+    classifier_on = _CLASSIFIER is not None
+
     for item, outcome in per_item:
-        cat = by_category.setdefault(item.category, {"total": 0, "flagged": 0, "blocked": 0})
+        cat = by_category.setdefault(item.category, {"total": 0, "flagged": 0, "blocked": 0, "clf_flagged": 0})
         cat["total"] += 1
         if flagged(outcome.combined_action):
             cat["flagged"] += 1
         if blocked(outcome.combined_action):
             cat["blocked"] += 1
+        if flagged(outcome.classifier_action):
+            cat["clf_flagged"] += 1
 
         if item.label == "attack" and not flagged(outcome.combined_action):
             misses.append({
                 "id": item.id, "category": item.category, "text": item.text,
                 "rule_action": outcome.rule_action, "semantic_action": outcome.semantic_action,
+                "classifier_action": outcome.classifier_action,
                 "raw_score": round(outcome.raw_score, 3),
+                "classifier_score": round(outcome.classifier_score, 3) if outcome.classifier_score is not None else None,
             })
         if item.label == "benign" and flagged(outcome.combined_action):
             false_positives.append({
                 "id": item.id, "category": item.category, "text": item.text,
                 "rule_action": outcome.rule_action, "semantic_action": outcome.semantic_action,
+                "classifier_action": outcome.classifier_action,
                 "combined_action": outcome.combined_action,
                 "raw_score": round(outcome.raw_score, 3),
             })
 
     summary_lines = []
-    summary_lines.append("=== Pipeline behaviour by corpus category (rule engine -> semantic scorer, as wired in orchestration/pipeline.py) ===")
-    summary_lines.append("%-22s %6s %10s %10s" % ("category", "n", "flagged%", "blocked%"))
+    wiring = "rule engine -> semantic scorer -> classifier" if classifier_on else "rule engine -> semantic scorer"
+    summary_lines.append("=== Pipeline behaviour by corpus category (%s, as wired in orchestration/pipeline.py) ===" % wiring)
+    if not classifier_on:
+        summary_lines.append("(prompt classifier: not configured — set ARGUS_PROMPT_CLASSIFIER_PATH to include it)")
+    header = "%-22s %6s %10s %10s" % ("category", "n", "flagged%", "blocked%")
+    if classifier_on:
+        header += " %12s" % "classifier%"
+    summary_lines.append(header)
     for cat, counts in sorted(by_category.items()):
         n = counts["total"]
-        flagged_pct = 100.0 * counts["flagged"] / n
-        blocked_pct = 100.0 * counts["blocked"] / n
-        summary_lines.append("%-22s %6d %9.0f%% %9.0f%%" % (cat, n, flagged_pct, blocked_pct))
+        row = "%-22s %6d %9.0f%% %9.0f%%" % (
+            cat, n, 100.0 * counts["flagged"] / n, 100.0 * counts["blocked"] / n)
+        if classifier_on:
+            row += " %11.0f%%" % (100.0 * counts["clf_flagged"] / n)
+        summary_lines.append(row)
 
     attack_items = [i for i in items if i.label == "attack"]
     benign_items = [i for i in items if i.label == "benign"]
@@ -294,22 +425,98 @@ def report_threshold_sweep(items: List[CorpusItem]) -> Dict[str, object]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Section 3: local ML classifier threshold sweep (only when a model is configured)
+# ---------------------------------------------------------------------------
+
+def report_classifier_sweep(items: List[CorpusItem]) -> Optional[Dict[str, object]]:
+    if _CLASSIFIER is None:
+        print("\n=== Local ML classifier ===\nNot configured (ARGUS_PROMPT_CLASSIFIER_PATH unset) — skipping classifier sweep.")
+        return None
+
+    positives = [i for i in items if i.label == "attack"]
+    negatives = [i for i in items if i.label == "benign" and i.category != "quoted_discussed"]
+    quoted = [i for i in items if i.category == "quoted_discussed"]
+
+    def clf_score(text: str) -> float:
+        r = _CLASSIFIER.classify_sync(text)
+        if r.status != "SUCCESS":
+            raise RuntimeError("classifier evaluation failed: %s" % (r.reason or r.status))
+        return r.score
+
+    scores = {i.id: clf_score(i.text) for i in items}
+    operating_threshold = _CLASSIFIER.label_map.threshold_review
+    thresholds = sorted(set([round(t * 0.05, 2) for t in range(1, 20)] + [operating_threshold]))
+    rows = []
+    best = None
+    for t in thresholds:
+        tp = sum(1 for i in positives if scores[i.id] >= t)
+        fp = sum(1 for i in negatives if scores[i.id] >= t)
+        fn = len(positives) - tp
+        precision = tp / (tp + fp) if (tp + fp) else 1.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        rows.append({"threshold": t, "tp": tp, "fp": fp, "fn": fn,
+                     "precision": round(precision, 3), "recall": round(recall, 3), "f1": round(f1, 3)})
+        if best is None or f1 > best["f1"]:
+            best = rows[-1]
+
+    src = getattr(_CLASSIFIER, "model_dir", "?")
+    lm = getattr(_CLASSIFIER, "label_map", None)
+    print("\n=== Local ML classifier threshold sweep (model=%s; positive=attack n=%d, negative=benign excl. quoted n=%d) ===" % (src, len(positives), len(negatives)))
+    print("fingerprint=%s  problem_type=%s  calibration=%s  thresholds(block/review)=%.2f/%.2f" % (
+        classifier_fingerprint(getattr(_CLASSIFIER, "model_dir", None)),
+        getattr(lm, "problem_type", "?"),
+        getattr(getattr(lm, "calibration", None), "method", "none"),
+        getattr(lm, "threshold_block", 0.0), getattr(lm, "threshold_review", 0.0)))
+    print("%8s %5s %5s %5s %10s %8s %6s" % ("thresh", "tp", "fp", "fn", "precision", "recall", "f1"))
+    for r in rows:
+        print("%8.2f %5d %5d %5d %10.3f %8.3f %6.3f" % (
+            r["threshold"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["f1"]))
+    print("Best-F1 classifier threshold on this corpus: %.2f (precision=%.3f recall=%.3f f1=%.3f)" % (
+        best["threshold"], best["precision"], best["recall"], best["f1"]))
+    quoted_hi = [i.id for i in quoted if scores[i.id] >= 0.5]
+    print("Quoted/discussed items scored >=0.50 by the raw model: %d/%d %s" % (
+        len(quoted_hi), len(quoted), quoted_hi or ""))
+    return {"sweep": rows, "best_f1_threshold_metrics": best,
+            "operating_threshold_metrics": next(row for row in rows if row["threshold"] == operating_threshold),
+            "quoted_discussed_high_raw_score": quoted_hi}
+
+
 def main() -> None:
-    items = load_corpus(CORPUS_PATH)
-    print("Loaded %d labeled corpus items from %s\n" % (len(items), CORPUS_PATH.relative_to(REPO_ROOT)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", type=pathlib.Path, default=CORPUS_PATH)
+    parser.add_argument("--held-out-benchmark", type=pathlib.Path,
+                        default=REPO_ROOT / "tools" / "evaluation" / "corpus" / "heldout_benchmark.jsonl",
+                        help="independent externally-sourced benchmark (classifier-only generalization number)")
+    parser.add_argument("--output", type=pathlib.Path,
+                        default=RESULTS_DIR / "prompt_calibration_report.json")
+    args = parser.parse_args()
+    corpus_path = args.corpus.resolve()
+    items = load_corpus(corpus_path)
+    print("Loaded %d labeled corpus items from %s\n" % (len(items), corpus_path))
 
     pipeline_report = report_pipeline_behaviour(items)
     sweep_report = report_threshold_sweep(items)
+    classifier_report = report_classifier_sweep(items)
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULTS_DIR / "prompt_calibration_report.json"
+    benchmark_report = None
+    if args.held_out_benchmark and args.held_out_benchmark.is_file():
+        benchmark_report = report_held_out_benchmark(load_benchmark(args.held_out_benchmark))
+
+    out_path = args.output
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({
-        "corpus_path": str(CORPUS_PATH.relative_to(REPO_ROOT)),
+        "classifier_configured": _CLASSIFIER is not None,
+        "model_fingerprint": classifier_fingerprint() if _CLASSIFIER is not None else None,
+        "classifier_sweep": classifier_report,
+        "corpus_path": str(corpus_path),
         "corpus_size": len(items),
         "pipeline_behaviour": pipeline_report,
         "threshold_sweep": sweep_report,
+        "held_out_benchmark": benchmark_report,
     }, indent=2))
-    print("\nFull report written to %s" % out_path.relative_to(REPO_ROOT))
+    print("\nFull report written to %s" % out_path)
 
 
 if __name__ == "__main__":
